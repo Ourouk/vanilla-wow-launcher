@@ -135,6 +135,21 @@
     "installed_files": ["transmogfix.dll"]
   },
   {
+    "id": "weirdutils",
+    "essential": true,
+    "name": "WeirdUtils",
+    "description": "Vanilla WoW 1.12.1 utility DLLs — transmog fix, world markers, performance, and more.",
+    "repo_url": "https://codeberg.org/MarcelineVQ/WeirdUtils",
+    "source": {
+      "kind": "direct_file",
+      "url": "https://codeberg.org/MarcelineVQ/WeirdUtils/releases/download/v0.7.1/weirdutils.dll",
+      "dest": "weirdutils.dll",
+      "pinned_version": "v0.7.1"
+    },
+    "register_dll": "weirdutils.dll",
+    "installed_files": ["weirdutils.dll"]
+  },
+  {
     "id": "UnitXP_SP3",
     "essential": true,
     "name": "UnitXP_SP3",

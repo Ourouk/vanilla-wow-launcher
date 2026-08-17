@@ -413,7 +413,7 @@ def test_example_octowow_mods_catalog_validates():
     with open(path, encoding="utf-8") as f:
         raw = json.load(f)
     assert isinstance(raw, list)
-    assert len(raw) == 11
+    assert len(raw) == 12
     ids = []
     for entry in raw:
         cleaned = catalog.validate_mod(entry)
@@ -428,6 +428,7 @@ def test_example_octowow_mods_catalog_validates():
         "PerfBoost",
         "SuperWoW",
         "transmogfix",
+        "weirdutils",
         "UnitXP_SP3",
         "VanillaHelpers",
         "VanillaMultiMonitorFix",
