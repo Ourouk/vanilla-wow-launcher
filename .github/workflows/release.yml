@@ -3,6 +3,10 @@ name: Release
 # Builds the launcher for Windows, Linux (AppImage) and macOS (universal2 DMG)
 # on a v* tag push and publishes them to a GitHub Release, e.g. `git tag v1.3
 # && git push origin v1.3`.
+#
+# Each platform is an independent job; the release runs as soon as at least
+# one platform build succeeded (OR), so a single platform failure does not
+# block the release of the others.
 
 on:
   push:
@@ -24,30 +28,67 @@ jobs:
       - name: Run the test suite
         run: uv run pytest
 
-  build:
+  build-windows:
     needs: test
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: windows-latest
-            target: windows
-            artifact: launcher-windows
-            file: VanillaWoWLauncher-windows-x86_64.exe
-          - os: ubuntu-22.04
-            target: linux
-            artifact: launcher-linux
-            file: VanillaWoWLauncher-linux-x86_64.AppImage
-          - os: macos-14
-            target: macos
-            artifact: launcher-macos
-            file: VanillaWoWLauncher-universal2.dmg
-
-    runs-on: ${{ matrix.os }}
+    runs-on: windows-latest
     defaults:
       run:
         shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Sync dependencies
+        run: uv sync --dev
+      - name: Build (Windows)
+        run: uv run pyinstaller --noconfirm --clean VanillaWoWLauncher.spec
+      - name: Stage artifact
+        run: |
+          mkdir -p artifacts
+          test -f dist/VanillaWoWLauncher.exe || { echo "Missing dist/VanillaWoWLauncher.exe" >&2; exit 1; }
+          cp dist/VanillaWoWLauncher.exe artifacts/VanillaWoWLauncher-windows-x86_64.exe
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: launcher-windows
+          path: artifacts/VanillaWoWLauncher-windows-x86_64.exe
+          if-no-files-found: error
 
+  build-linux:
+    needs: test
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Install Qt runtime dependencies (Linux)
+        run: sudo apt-get update && sudo apt-get install -y libegl1
+      - name: Install ImageMagick (Linux)
+        run: sudo apt-get update && sudo apt-get install -y imagemagick
+      - name: Fetch linuxdeploy (Linux)
+        run: |
+          curl -L -o linuxdeploy-x86_64.AppImage \
+            https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          chmod +x linuxdeploy-x86_64.AppImage
+          echo "LINUXDEPLOY=$PWD/linuxdeploy-x86_64.AppImage" >> "$GITHUB_ENV"
+          echo "APPIMAGE_EXTRACT_AND_RUN=1" >> "$GITHUB_ENV"
+      - name: Sync dependencies
+        run: uv sync --dev
+      - name: Build AppImage (Linux)
+        run: ./packaging/linux/build-appimage.sh
+      - name: Stage artifact
+        run: |
+          mkdir -p artifacts
+          test -f dist/VanillaWoWLauncher-x86_64.AppImage || { echo "Missing dist/VanillaWoWLauncher-x86_64.AppImage" >&2; exit 1; }
+          cp dist/VanillaWoWLauncher-x86_64.AppImage artifacts/VanillaWoWLauncher-linux-x86_64.AppImage
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: launcher-linux
+          path: artifacts/VanillaWoWLauncher-linux-x86_64.AppImage
+          if-no-files-found: error
+
+  build-macos:
+    needs: test
+    runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
@@ -58,67 +99,36 @@ jobs:
       # universal2 wheels, so a universal2 interpreter suffices to build both
       # architectures (verified by `lipo` in build-dmg.sh).
       - name: Install universal2 Python (macOS)
-        if: matrix.target == 'macos'
         run: |
           curl -L -o python.pkg \
             https://www.python.org/ftp/python/3.12.8/python-3.12.8-macos11.pkg
           sudo installer -pkg python.pkg -target /
           echo "UV_PYTHON=/Library/Frameworks/Python.framework/Versions/3.12/bin/python3" >> "$GITHUB_ENV"
 
-      # AppImage toolchain: ImageMagick for the icon + linuxdeploy. linuxdeploy
-      # is an AppImage itself, so APPIMAGE_EXTRACT_AND_RUN=1 avoids needing
-      # FUSE on the runner.
-      - name: Install Qt runtime dependencies (Linux)
-        if: matrix.target == 'linux'
-        run: sudo apt-get update && sudo apt-get install -y libegl1
-      - name: Install ImageMagick (Linux)
-        if: matrix.target == 'linux'
-        run: sudo apt-get update && sudo apt-get install -y imagemagick
-
-      - name: Fetch linuxdeploy (Linux)
-        if: matrix.target == 'linux'
-        run: |
-          curl -L -o linuxdeploy-x86_64.AppImage \
-            https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
-          chmod +x linuxdeploy-x86_64.AppImage
-          echo "LINUXDEPLOY=$PWD/linuxdeploy-x86_64.AppImage" >> "$GITHUB_ENV"
-          echo "APPIMAGE_EXTRACT_AND_RUN=1" >> "$GITHUB_ENV"
-
       - name: Sync dependencies
         run: uv sync --dev
 
-      - name: Build (Windows)
-        if: matrix.target == 'windows'
-        run: uv run pyinstaller --noconfirm --clean VanillaWoWLauncher.spec
-
-      - name: Build AppImage (Linux)
-        if: matrix.target == 'linux'
-        run: ./packaging/linux/build-appimage.sh
-
       - name: Build universal2 DMG (macOS)
-        if: matrix.target == 'macos'
         run: ./packaging/macos/build-dmg.sh
 
       - name: Stage artifact
         run: |
           mkdir -p artifacts
-          case "${{ matrix.target }}" in
-            windows) src="dist/VanillaWoWLauncher.exe" ;;
-            linux)   src="dist/VanillaWoWLauncher-x86_64.AppImage" ;;
-            macos)   src="dist/VanillaWoWLauncher-universal2.dmg" ;;
-          esac
-          test -f "$src" || { echo "Missing $src" >&2; exit 1; }
-          cp "$src" "artifacts/${{ matrix.file }}"
-
+          test -f dist/VanillaWoWLauncher-universal2.dmg || { echo "Missing dist/VanillaWoWLauncher-universal2.dmg" >&2; exit 1; }
+          cp dist/VanillaWoWLauncher-universal2.dmg artifacts/VanillaWoWLauncher-universal2.dmg
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact }}
-          path: artifacts/${{ matrix.file }}
+          name: launcher-macos
+          path: artifacts/VanillaWoWLauncher-universal2.dmg
           if-no-files-found: error
 
   release:
-    needs: build
+    needs: [build-windows, build-linux, build-macos]
+    # Run whenever at least one platform build succeeded (OR), even if others
+    # failed. `always()` bypasses the default skip-on-failure; the contains()
+    # checks guard against a total failure / test skip producing no artifacts.
+    if: ${{ always() && (needs.build-windows.result == 'success' || needs.build-linux.result == 'success' || needs.build-macos.result == 'success') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

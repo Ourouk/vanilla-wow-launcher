@@ -31,6 +31,55 @@ STAGE="dist/dmg-staging"
 # 2. PyInstaller universal2 .app bundle
 echo "==> Building universal2 .app bundle"
 uv sync --dev
+
+# libtorrent only publishes single-arch macOS wheels (no universal2), so the
+# universal2 build would fail. Merge the installed arch's .so with the other
+# arch's .so via lipo to produce a fat binary PyInstaller can bundle.
+echo "==> Merging libtorrent into a universal2 binary"
+PYTHON="$ROOT/.venv/bin/python"
+LT_DIR="$("$PYTHON" -c 'import os, libtorrent; print(os.path.dirname(libtorrent.__file__))')"
+LT_SO="$(find "$LT_DIR" -maxdepth 1 -name '*.so' | head -n 1)"
+if lipo -info "$LT_SO" | grep -q "fat file"; then
+  echo "    libtorrent is already universal; skipping merge"
+else
+  CUR_ARCH="$(lipo -info "$LT_SO" | tr -d ' ' | awk -F: '/Non-fat/{print $NF; exit}')"
+  if [[ "$CUR_ARCH" == "arm64" ]]; then
+    WANT_ARCH="x86_64"
+  else
+    WANT_ARCH="arm64"
+  fi
+  echo "    installed libtorrent is ${CUR_ARCH}-only; merging ${WANT_ARCH}"
+  LT_VER="$("$PYTHON" -c 'import importlib.metadata; print(importlib.metadata.version("libtorrent"))')"
+  PY_TAG="$("$PYTHON" -c 'import sys; print(f"cp{sys.version_info.major}{sys.version_info.minor}")')"
+  URL="$("$PYTHON" - "$LT_VER" "$PY_TAG" "$WANT_ARCH" <<'PY'
+import json, sys, urllib.request
+
+version, py_tag, want = sys.argv[1], sys.argv[2], sys.argv[3]
+with urllib.request.urlopen(
+    f"https://pypi.org/pypi/libtorrent/{version}/json"
+) as resp:
+    data = json.load(resp)
+for u in data["urls"]:
+    fn = u["filename"]
+    if "macos" in fn and fn.endswith(f"{want}.whl") and py_tag in fn:
+        print(u["url"])
+        break
+else:
+    sys.exit(f"no {want} macOS wheel for libtorrent {version}")
+PY
+)"
+  TMP="$(mktemp -d /tmp/libtorrent-merge-XXXXXX)"
+  trap 'rm -rf "$TMP"' EXIT
+  curl -sL -o "$TMP/libtorrent.whl" "$URL"
+  unzip -q -o "$TMP/libtorrent.whl" -d "$TMP/extra"
+  EXTRA_SO="$(find "$TMP/extra" -name '*.so' | head -n 1)"
+  lipo -create "$LT_SO" "$EXTRA_SO" -output "$TMP/merged.so"
+  mv "$TMP/merged.so" "$LT_SO"
+  echo "    merged arches: $(lipo -info "$LT_SO" | awk -F: '/fat file/{print $NF; exit}')"
+  trap - EXIT
+  rm -rf "$TMP"
+fi
+
 uv run pyinstaller --noconfirm --clean VanillaWoWLauncher-macos.spec
 
 # 3. Verify the binary is truly universal
