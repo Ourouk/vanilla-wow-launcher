@@ -127,6 +127,30 @@ def default_out_dir() -> str:
     return os.path.join(os.path.expanduser("~"), "VanillaWoW")
 
 
+# Characters illegal in a folder name on Windows/Linux/macOS — stripped when
+# turning a server name into a Games/<name> subfolder.
+_ILLEGAL_DIR_CHARS = ':/\\*?"<>|'
+
+
+def games_dir() -> str:
+    """Per-user 'Games' folder where each server's client is installed
+    (e.g. ~/Games on every OS)."""
+    return os.path.join(os.path.expanduser("~"), "Games")
+
+
+def server_games_dir(name: str) -> str:
+    """The game-client folder for a server: Games/<sanitized name>.
+
+    Strips characters that are illegal in folder names while keeping letters,
+    digits, spaces and dashes; falls back to 'VanillaWoW' for an empty/blank
+    name."""
+    safe = "".join(c for c in (name or "") if c not in _ILLEGAL_DIR_CHARS)
+    safe = safe.strip()
+    if not safe:
+        safe = "VanillaWoW"
+    return os.path.join(games_dir(), safe)
+
+
 def open_folder(path: str):
     """Open a folder in the platform's file manager.
 

@@ -143,6 +143,34 @@ class ModsController:
         """Drop the cached latest versions; the next load refetches."""
         self.state.latest_versions = {}
 
+    def apply_essential_mods(self) -> bool:
+        """Install every essential mod not already present. Returns True when
+        an install actually started (a client is present and at least one
+        essential mod is missing)."""
+        if self._busy:
+            return False
+        out = (self._get_out_dir() or "").strip()
+        if not out or not os.path.exists(os.path.join(out, "WoW.exe")):
+            return False
+        mods_cfg = config_store.load_config().get("mods", {})
+        pending = False
+        for mod in mods.mods_registry():
+            if not mod.get("essential", False):
+                continue
+            state = mods_cfg.get(mod["id"], {})
+            if state.get(
+                "installed_version"
+            ) and mods.mod_installed_files_present(mod, out):
+                continue  # already installed
+            self.toggle(mod["id"], True)
+            pending = True
+        if not pending:
+            return False
+        self._dispatcher.post(
+            LogMessage("\nInstalling essential mods...\n", "acct")
+        )
+        return self.apply()
+
     def remove_unknown(self, name: str):
         """Uninstall a detected-but-untracked mod (a dlls.txt entry no catalog
         mod claims) straight from the filesystem, then republish the panel."""

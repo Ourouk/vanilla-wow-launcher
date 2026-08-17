@@ -111,7 +111,11 @@ def test_main_wizard_selection_runs_backend(
     cwd = tmp_path / "cwd"
     cwd.mkdir()
     monkeypatch.chdir(cwd)
-    monkeypatch.setattr(cli, "_pick_launcher_config", lambda: launcher_file)
+    monkeypatch.setattr(
+        cli,
+        "_pick_launcher_config",
+        lambda: {"kind": "file", "path": launcher_file},
+    )
     monkeypatch.setattr(cli, "resolve_backend", lambda name: FakeQtApp)
     assert cli.main([]) == 0
     assert calls == ["constructed", "shown", "run"]
@@ -139,7 +143,11 @@ def test_main_wizard_selection_persists_config(
     cwd = tmp_path / "cwd"
     cwd.mkdir()
     monkeypatch.chdir(cwd)
-    monkeypatch.setattr(cli, "_pick_launcher_config", lambda: launcher_file)
+    monkeypatch.setattr(
+        cli,
+        "_pick_launcher_config",
+        lambda: {"kind": "file", "path": launcher_file},
+    )
     monkeypatch.setattr(cli, "resolve_backend", lambda name: FakeQtApp)
     assert cli.main([]) == 0
     assert dest.exists()
@@ -179,7 +187,11 @@ def test_main_wizard_persistence_failure_aborts(
     cwd = tmp_path / "cwd"
     cwd.mkdir()
     monkeypatch.chdir(cwd)
-    monkeypatch.setattr(cli, "_pick_launcher_config", lambda: launcher_file)
+    monkeypatch.setattr(
+        cli,
+        "_pick_launcher_config",
+        lambda: {"kind": "file", "path": launcher_file},
+    )
     monkeypatch.setattr(cli, "resolve_backend", lambda name: FakeQtApp)
     assert cli.main([]) == 1
     assert (

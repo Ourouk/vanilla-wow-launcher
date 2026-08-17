@@ -53,13 +53,10 @@ def qapp():
 @pytest.fixture()
 def hub(qapp):
     hub = ControllerHub()
-    # Force a deterministic non-first-run state so closing the Settings
-    # dialog never triggers the first-run auto-install prompt (which is
-    # modal and would block the offscreen event loop).
+    # Force a deterministic non-first-run state.
     hub.settings.state.first_run = False
     hub.settings.state.first_run_av_pending = False
     hub.settings.state.first_run_verify_pending = False
-    hub.settings.state.first_run_auto_install_pending = False
     yield hub
     hub.close()
 

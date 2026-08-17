@@ -212,11 +212,6 @@ class SettingsState:
     first_run: bool = False
     first_run_av_pending: bool = False
     first_run_verify_pending: bool = False
-    first_run_auto_install_pending: bool = False
-    # Session-only pending install choices from the first-run prompt. Not
-    # persisted to config — cleared once the install runs or the session ends.
-    pending_auto_mods: bool = False
-    pending_auto_addons: bool = False
 
 
 @dataclass

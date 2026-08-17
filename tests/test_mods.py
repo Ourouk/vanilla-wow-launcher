@@ -8,6 +8,8 @@ import pytest
 import vanilla_wow_launcher.core.config_store as config_store
 import vanilla_wow_launcher.services.mods as mods
 import vanilla_wow_launcher.services.self_update as self_update
+from vanilla_wow_launcher.controllers.mods import ModsController
+from vanilla_wow_launcher.state.events import EventDispatcher
 
 # ── catalog / registry loading ───────────────────────────────────────────────
 
@@ -436,3 +438,89 @@ def test_example_octowow_mods_catalog_validates():
     assert dxvk["source"]["kind"] == "direct_tar"
     assert dxvk["source"]["pinned_version"] == "v2.7.1-1"
     assert "gitlab.com/Ph42oN/dxvk-gplasync" in dxvk["source"]["url"]
+
+
+# ── ModsController.apply_essential_mods ─────────────────────────────────────
+
+
+def test_apply_essential_mods_toggles_missing_and_applies(
+    tmp_path, monkeypatch
+):
+    config_store.configure(
+        str(tmp_path / "config.json"), str(tmp_path / "cache.json")
+    )
+    config_store.save_config(
+        {"mods": {"EssentialA": {"installed_version": "1.0"}}}
+    )
+    game = tmp_path / "game"
+    game.mkdir()
+    (game / "WoW.exe").write_bytes(b"MZ")
+    registry = [
+        {"id": "EssentialA", "essential": True, "name": "A"},
+        {"id": "EssentialB", "essential": True, "name": "B"},
+        {"id": "Optional", "essential": False, "name": "O"},
+    ]
+    monkeypatch.setattr(mods, "mods_registry", lambda *a, **k: registry)
+    monkeypatch.setattr(
+        mods,
+        "mod_installed_files_present",
+        lambda m, cd: m["id"] == "EssentialA",
+    )
+
+    applied = []
+    controller = ModsController(
+        EventDispatcher(), get_out_dir=lambda: str(game)
+    )
+    monkeypatch.setattr(
+        controller, "apply", lambda *a, **k: (applied.append(1), True)[1]
+    )
+
+    assert controller.apply_essential_mods() is True
+    # EssentialB (missing) toggled on; EssentialA (present) skipped; Optional
+    # is not essential so never considered.
+    assert controller.state.pending["EssentialB"].enabled is True
+    assert "EssentialA" not in controller.state.pending
+    assert "Optional" not in controller.state.pending
+    assert applied == [1]
+
+
+def test_apply_essential_mods_noop_when_all_present(tmp_path, monkeypatch):
+    config_store.configure(
+        str(tmp_path / "config.json"), str(tmp_path / "cache.json")
+    )
+    config_store.save_config(
+        {"mods": {"EssentialA": {"installed_version": "1.0"}}}
+    )
+    game = tmp_path / "game"
+    game.mkdir()
+    (game / "WoW.exe").write_bytes(b"MZ")
+    registry = [{"id": "EssentialA", "essential": True, "name": "A"}]
+    monkeypatch.setattr(mods, "mods_registry", lambda *a, **k: registry)
+    monkeypatch.setattr(
+        mods, "mod_installed_files_present", lambda m, cd: True
+    )
+
+    applied = []
+    controller = ModsController(
+        EventDispatcher(), get_out_dir=lambda: str(game)
+    )
+    monkeypatch.setattr(controller, "apply", lambda *a, **k: applied.append(1))
+
+    assert controller.apply_essential_mods() is False
+    assert applied == []
+
+
+def test_apply_essential_mods_skips_without_client(tmp_path, monkeypatch):
+    config_store.configure(
+        str(tmp_path / "config.json"), str(tmp_path / "cache.json")
+    )
+    config_store.save_config({})
+    registry = [{"id": "EssentialA", "essential": True, "name": "A"}]
+    monkeypatch.setattr(mods, "mods_registry", lambda *a, **k: registry)
+
+    controller = ModsController(
+        EventDispatcher(), get_out_dir=lambda: str(tmp_path)
+    )
+    monkeypatch.setattr(controller, "apply", lambda *a, **k: None)
+
+    assert controller.apply_essential_mods() is False

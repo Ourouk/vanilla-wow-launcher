@@ -17,7 +17,6 @@ from PySide6.QtCore import QObject, Qt, QTimer, Signal
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QButtonGroup,
-    QDialog,
     QGridLayout,
     QHBoxLayout,
     QLabel,
@@ -38,7 +37,6 @@ from ...core.log_sink import _LOG_Q, log
 from ...services import logo
 from ...state.events import LogMessage
 from .addons_panel import AddonsPanel
-from .auto_install_dialog import AutoInstallDialog
 from .bridge import ControllerHub
 from .custom_addon_dialog import CustomAddonDialog
 from .log_window import LogWindow
@@ -510,7 +508,6 @@ class MainWindow(QMainWindow):
         ):
             self._hub.settings.state.first_run_verify_pending = False
             self._after(100, lambda: self._start_verify(overwrite_config=True))
-        self._maybe_prompt_auto_install()
         if not self._hub.settings.state.first_run_av_pending:
             return
         if self._hub.settings.should_prompt_av():
@@ -527,24 +524,6 @@ class MainWindow(QMainWindow):
             if ret == QMessageBox.Yes:
                 self._hub.settings.allow_through_antivirus()
         self._hub.settings.av_prompt_dismissed()
-
-    def _maybe_prompt_auto_install(self):
-        """First-run prompt: ask once whether to install the server's
-        essential mods and recommended addons for the chosen game folder.
-        Accepting stores a session-only pending request that retries when
-        the client is present and the catalog is loaded; skipping clears
-        it. There's no later Settings entry — it's one-shot, first-run-only."""
-        if not self._hub.settings.state.first_run_auto_install_pending:
-            return
-        self._hub.settings.state.first_run_auto_install_pending = False
-        dlg = AutoInstallDialog(self._palette, self)
-        if dlg.exec() != QDialog.Accepted:
-            self._hub.settings.state.pending_auto_mods = False
-            self._hub.settings.state.pending_auto_addons = False
-            return
-        self._hub.settings.set_auto_installs(
-            dlg.mods_checked, dlg.addons_checked
-        )
 
     def _on_show_logs_requested(self):
         """Open (or re-raise) the session-log window, seeded from the

@@ -13,7 +13,7 @@ import argparse
 import os
 import sys
 
-from .core import config_store, launcher
+from .core import config_store, launcher, platform_support
 from .core.constants import (
     CACHE_FILE,
     CONFIG_FILE,
@@ -81,8 +81,10 @@ def main(argv=None) -> int:
 
 
 def _first_launch() -> int:
-    """No launcher config and no --launcher-config: ask the user to pick one,
-    then persist it so future launches reuse it."""
+    """No launcher config and no --launcher-config: ask the user to pick a
+    server (or a local config file), then persist it so future launches reuse
+    it. On first run with no game folder set, the client default is
+    ~/Games/<ServerName>."""
     try:
         chosen = _pick_launcher_config()
     except ImportError as e:
@@ -94,34 +96,90 @@ def _first_launch() -> int:
             "is required — launch again with --launcher-config.\n"
         )
         return 1
-    _cfg, err = launcher.configure(chosen)
-    if err:
-        sys.stderr.write(f"{err}\n")
-        return 1
-    dest, err = launcher.persist(chosen)
-    if err:
-        sys.stderr.write(f"{err}\n")
-        return 1
-    if os.path.normpath(dest) != os.path.normpath(chosen):
+    if chosen["kind"] == "file":
+        _cfg, err = launcher.configure(chosen["path"])
+        if err:
+            sys.stderr.write(f"{err}\n")
+            return 1
+        dest, err = launcher.persist(chosen["path"])
+        if err:
+            sys.stderr.write(f"{err}\n")
+            return 1
+        if os.path.normpath(dest) != os.path.normpath(chosen["path"]):
+            _cfg, err = launcher.configure(dest)
+            if err:
+                sys.stderr.write(f"{err}\n")
+                return 1
+    else:  # remote: config fetched from the repo
+        import json
+
+        from .services import server_index
+
+        # Reuse the config the wizard already fetched when possible, otherwise
+        # fetch it now (e.g. if the selection came from a non-interactive path).
+        raw = chosen.get("raw")
+        if not raw:
+            _data, raw, err = server_index.fetch_server_config(
+                chosen["config_url"]
+            )
+            if err:
+                sys.stderr.write(f"{err}\n")
+                return 1
+        _cfg = launcher.configure_from_dict(json.loads(raw))
+        if _cfg is None:
+            sys.stderr.write(
+                f"Invalid launcher configuration: {launcher.config_error()}\n"
+            )
+            return 1
+        dest, err = launcher.persist_text(raw)
+        if err:
+            sys.stderr.write(f"{err}\n")
+            return 1
         _cfg, err = launcher.configure(dest)
         if err:
             sys.stderr.write(f"{err}\n")
             return 1
+    _ensure_default_game_folder()
     return _run_backend()
 
 
-def _pick_launcher_config() -> str | None:
-    """Modal first-launch config picker; returns the chosen path or None."""
+def _pick_launcher_config() -> dict | None:
+    """Modal first-launch config picker; returns the chosen selection dict
+    (``{"kind": "file", "path"}`` or ``{"kind": "remote", "config_url",
+    "name"}``) or None on cancel."""
     from PySide6.QtWidgets import QDialog
 
+    from .services import server_index
     from .ui.qt.app import create_qt_app
     from .ui.qt.launcher_config_dialog import LauncherConfigDialog
 
+    # The index is fetched here (not inside the dialog) so the wizard never
+    # blocks on the network while it is on screen; an unreadable index simply
+    # yields an empty list and the dialog falls back to file browsing.
+    servers = server_index.fetch_servers_index()
     create_qt_app()
-    dlg = LauncherConfigDialog(initial_path=launcher.discover_path())
+    dlg = LauncherConfigDialog(
+        servers=servers, initial_path=launcher.discover_path()
+    )
     if dlg.exec() != QDialog.DialogCode.Accepted:
         return None
-    return dlg.selected_path()
+    return dlg.selection()
+
+
+def _ensure_default_game_folder():
+    """On first run with no game folder configured, default it to
+    ~/Games/<ServerName> so the client installs there; the user can still
+    change it in Settings."""
+    cfg = config_store.load_config()
+    if cfg.get("out_dir"):
+        return
+    name = launcher.server_name() or "VanillaWoW"
+    folder = platform_support.server_games_dir(name)
+    try:
+        os.makedirs(folder, exist_ok=True)
+    except OSError:
+        return
+    config_store.update_config(lambda c: c.__setitem__("out_dir", folder))
 
 
 def _run_backend() -> int:

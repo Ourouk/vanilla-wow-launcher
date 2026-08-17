@@ -18,7 +18,13 @@ from unittest.mock import Mock
 
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QLabel, QLineEdit, QMessageBox, QWidget
+from PySide6.QtWidgets import (
+    QLabel,
+    QLineEdit,
+    QMessageBox,
+    QPushButton,
+    QWidget,
+)
 
 from vanilla_wow_launcher.state.events import AddonsLoaded
 from vanilla_wow_launcher.state.models import AddonsState, AddonState
@@ -395,3 +401,42 @@ def test_badge_shows_updates_count_and_hides_at_zero(qapp, window, hub):
 
     _post(hub, _make_state())
     assert not badge.isVisible()
+
+
+# ── install-recommended button ──────────────────────────────────────────
+
+
+def test_install_recommended_button_present_and_enabled_when_missing(
+    qapp, window, hub
+):
+    window.switch_tab("ADDONS")
+    panel = _panel(window)
+    btn = panel.findChild(QPushButton, "addonsInstallRecommended")
+    assert btn is not None
+    hub.addons._recommended = {"pfUI"}
+    _post(hub, _make_state(available=MIX_AVAILABLE))
+    assert btn.isEnabled()
+
+
+def test_install_recommended_button_disabled_when_all_installed(
+    qapp, window, hub
+):
+    window.switch_tab("ADDONS")
+    panel = _panel(window)
+    btn = panel.findChild(QPushButton, "addonsInstallRecommended")
+    hub.addons._recommended = {"pfUI"}
+    _post(hub, _make_state(addons={"pfUI": MIX_AVAILABLE[0]}))
+    assert not btn.isEnabled()
+
+
+def test_install_recommended_button_calls_controller(
+    qapp, window, hub, monkeypatch
+):
+    window.switch_tab("ADDONS")
+    panel = _panel(window)
+    hub.addons._recommended = {"pfUI"}
+    _post(hub, _make_state(available=MIX_AVAILABLE))
+    install_mock = Mock()
+    monkeypatch.setattr(hub.addons, "apply_recommended_addons", install_mock)
+    panel.findChild(QPushButton, "addonsInstallRecommended").click()
+    install_mock.assert_called_once_with()

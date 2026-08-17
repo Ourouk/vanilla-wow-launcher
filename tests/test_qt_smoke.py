@@ -23,7 +23,7 @@ from unittest.mock import Mock
 
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QDialog, QLabel, QWidget
+from PySide6.QtWidgets import QLabel, QWidget
 
 import vanilla_wow_launcher.controllers.news as news_controller
 import vanilla_wow_launcher.controllers.settings as settings_controller
@@ -338,17 +338,7 @@ def test_first_run_defers_verify_until_settings_close(
         assert win._settingsDialog.isVisible()
         hub.updater.start_verify.assert_not_called()
 
-        # Closing it arms the deferred verify (overwrite_config=True). The
-        # first-run auto-install prompt fires on the same close — patch it so
-        # it doesn't block the offscreen event loop.
-        class _SkipAutoInstallDialog:
-            def __init__(self, *args, **kwargs):
-                pass
-
-            def exec(self):
-                return QDialog.Rejected
-
-        monkeypatch.setattr(mw, "AutoInstallDialog", _SkipAutoInstallDialog)
+        # Closing it arms the deferred verify (overwrite_config=True).
         win._settingsDialog.close()
         _wait_until(lambda: hub.updater.start_verify.call_count == 1)
         hub.updater.start_verify.assert_called_once_with(True)

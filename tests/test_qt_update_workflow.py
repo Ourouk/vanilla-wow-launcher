@@ -62,7 +62,6 @@ def window(qapp, monkeypatch):
     hub.settings.state.first_run = False
     hub.settings.state.first_run_av_pending = False
     hub.settings.state.first_run_verify_pending = False
-    hub.settings.state.first_run_auto_install_pending = False
     # A previously verified setup: a manifest has been fetched, so the
     # real compute_readiness baseline is the gold UPDATE button.
     hub.updater.state.manifest_available = True

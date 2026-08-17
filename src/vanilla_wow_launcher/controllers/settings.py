@@ -3,10 +3,9 @@
 Owns the settings business logic: the game-folder-change reset (hash cache
 drop, folder-scoped config wipe, resets of the other controllers), the
 first-run flags, the Windows Defender exclusion flow, the download-mirror
-check, the verify-game-files shortcut, the settings toggles and the
-install-missing mods/addons shortcuts. Publishes LogMessage and
-MirrorStatusChanged on the shared EventDispatcher; the Qt Settings dialog
-renders them. No GUI toolkit.
+check, the verify-game-files shortcut and the settings toggles. Publishes
+LogMessage and MirrorStatusChanged on the shared EventDispatcher; the Qt
+Settings dialog renders them. No GUI toolkit.
 """
 
 import os
@@ -26,12 +25,9 @@ from ..core.errors import describe_net_error
 from ..core.security_http import secure_urlopen
 from ..services import addons, mods
 from ..state.events import (
-    AddonsLoaded,
     EventDispatcher,
     LogMessage,
     MirrorStatusChanged,
-    ModsLoaded,
-    OperationFinished,
 )
 from ..state.models import LaunchSettings, SettingsState
 
@@ -77,37 +73,12 @@ class SettingsController:
         self.state.first_run_verify_pending = (
             self.state.first_run and self.client_update_enabled
         )
-        # On first run ask once whether to install the server's essential
-        # mods and recommended addons (the Qt layer shows the prompt when the
-        # first-run Settings dialog closes). There is no later Settings entry
-        # for this — it's a one-shot, first-run-only choice.
-        self.state.first_run_auto_install_pending = self.state.first_run
 
         # Download-mirror reachability, as reported by the last check_mirror()
         # ({name: "" | "checking…" | "online" | "offline"}). Not part of
         # SettingsState — it's transient session state the Settings modal
         # renders.
         self.mirror_statuses: dict[str, str] = {}
-
-        # Retry the deferred first-run install whenever the catalog loads,
-        # the addons list refreshes, or a client/addons update completes.
-        dispatcher.subscribe(self._on_event)
-
-    # ── event-driven retry ────────────────────────────────────────────────
-
-    def _on_event(self, event):
-        if isinstance(event, (ModsLoaded, AddonsLoaded)):
-            self.run_pending_auto_install()
-        elif isinstance(event, OperationFinished):
-            if (
-                event.ok
-                and event.kind in ("update", "addons")
-                and (
-                    self.state.pending_auto_mods
-                    or self.state.pending_auto_addons
-                )
-            ):
-                self.run_pending_auto_install()
 
     # ── public API ──────────────────────────────────────────────────────────
 
@@ -367,67 +338,6 @@ class SettingsController:
 
         self.state.config = config_store.update_config(_wipe)
         return self.state.config
-
-    def install_missing_essential_mods(self) -> bool:
-        """Install every essential mod not already present. Used when the user
-        turns 'Install essential mods' on after the fact. Returns True when an
-        install actually started."""
-        if self._updater.running:
-            return False
-        out = self.state.path.strip()
-        if not out or not os.path.exists(os.path.join(out, "WoW.exe")):
-            return False  # no client yet — the fresh-folder auto-install
-        mods_cfg = config_store.load_config().get("mods", {})
-        pending = False
-        for mod in mods.mods_registry():
-            if not mod.get("essential", False):
-                continue
-            state = mods_cfg.get(mod["id"], {})
-            if state.get(
-                "installed_version"
-            ) and mods.mod_installed_files_present(mod, out):
-                continue  # already installed
-            self._mods.toggle(mod["id"], True)
-            pending = True
-        if not pending:
-            return False
-        self._dispatcher.post(
-            LogMessage("\nInstalling essential mods...\n", "acct")
-        )
-        self._mods.apply()
-        return True
-
-    def install_missing_recommended_addons(self) -> bool:
-        """Install every recommended addon not already present. Delegates to
-        the addons controller which uses the catalog-recommended set.
-        Returns True when an install actually started."""
-        return self._addons.apply_recommended_addons()
-
-    def set_auto_installs(self, mods: bool, addons: bool) -> None:
-        """Set the pending first-run install choices (session-only).
-        Called by the prompt; actual installs run later when ready."""
-        self.state.pending_auto_mods = mods
-        self.state.pending_auto_addons = addons
-        self.run_pending_auto_install()
-
-    def run_pending_auto_install(self) -> None:
-        """Run the deferred first-run install when the client is present and
-        the catalog is loaded. Called by the prompt, on catalog load, and
-        after a client/addons update completes."""
-        if (
-            not self.state.pending_auto_mods
-            and not self.state.pending_auto_addons
-        ):
-            return
-        out = self.state.path.strip()
-        if not out or not os.path.exists(os.path.join(out, "WoW.exe")):
-            return
-        if self.state.pending_auto_mods:
-            if self.install_missing_essential_mods():
-                self.state.pending_auto_mods = False
-        if self.state.pending_auto_addons:
-            if self.install_missing_recommended_addons():
-                self.state.pending_auto_addons = False
 
     def open_client_folder(self):
         path = os.path.normpath(self.state.path.strip())

@@ -183,6 +183,23 @@ class ModsPanel(ScrollListPanel):
         footer = QWidget(self)
         footer_layout = QHBoxLayout(footer)
         footer_layout.setContentsMargins(16, 6, 16, 10)
+        self._recommended_button = QPushButton("★  Install Essential", footer)
+        self._recommended_button.setObjectName("modsInstallRecommended")
+        self._recommended_button.setCursor(Qt.PointingHandCursor)
+        self._recommended_button.setStyleSheet(
+            f"QPushButton {{ color: {p.gold.name()};"
+            f" border: 1px solid {p.gold.name()}; border-radius: 4px;"
+            f" background-color: {p.panel_bdr.name()};"
+            f" padding: 5px 18px; font-weight: bold; }}"
+            f"QPushButton:hover {{ background-color: {p.gold.name()};"
+            f" color: {p.hdr.name()}; }}"
+            f"QPushButton:disabled {{ color: {p.text_dim.name()};"
+            f" border-color: {p.panel_bdr.name()};"
+            f" background-color: {p.panel.name()}; }}"
+        )
+        self._recommended_button.clicked.connect(self._on_install_recommended)
+        footer_layout.addWidget(self._recommended_button)
+
         self._apply_button = QPushButton("Apply", footer)
         self._apply_button.setObjectName("modsApply")
         self._apply_button.setCursor(Qt.PointingHandCursor)
@@ -232,6 +249,7 @@ class ModsPanel(ScrollListPanel):
             self._rows[mid] = row
             self._add_row(row)
         self._render_unknown(state)
+        self._refresh_recommended_visibility()
 
     def _render_unknown(self, state):
         """Rows for dlls.txt entries no catalog mod claims — mods the client
@@ -286,6 +304,28 @@ class ModsPanel(ScrollListPanel):
             bool(st.has_pending_changes or st.has_errors)
         )
 
+    def _essential_remaining(self) -> list:
+        """Essential mods (registry flag) not yet present on disk."""
+        remaining = []
+        for mod in self._mods.registry:
+            if not mod.get("essential", False):
+                continue
+            rec = self._mods.state.records.get(mod["id"])
+            if rec is not None and rec.present:
+                continue
+            remaining.append(mod["id"])
+        return remaining
+
+    def _refresh_recommended_visibility(self):
+        """The 'Install Essential' button is enabled only while there is at
+        least one essential mod not yet installed and no install is running —
+        otherwise it greys out."""
+        self._recommended_button.setEnabled(
+            bool(self._essential_remaining())
+            and not self._running
+            and not self._mods.busy
+        )
+
     # ── actions ─────────────────────────────────────────────────────────────
 
     def _on_enabled_toggled(self, mid, checked):
@@ -304,14 +344,22 @@ class ModsPanel(ScrollListPanel):
         self._set_running(True)
         self._mods.apply()
 
+    def _on_install_recommended(self):
+        if self._mods.apply_essential_mods():
+            self._set_running(True)
+        else:
+            self._refresh_recommended_visibility()
+
     def _set_running(self, running: bool):
         self._running = running
         self._apply_button.setEnabled(not running)
+        self._refresh_recommended_visibility()
 
     # ── event hooks ────────────────────────────────────────────────────────
 
     def _after_loaded(self):
         self._refresh_apply_visibility()
+        self._refresh_recommended_visibility()
 
     def _after_operation(self):
         self._set_running(False)

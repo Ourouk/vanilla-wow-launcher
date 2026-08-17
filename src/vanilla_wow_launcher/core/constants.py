@@ -38,6 +38,13 @@ DOWNLOAD_TIMEOUT = 10  # seconds without any data before a transfer aborts
 GITHUB_API = "https://api.github.com"
 MOD_UA = f"VanillaWoWLauncher/{UPDATER_VERSION}"
 
+# First-run server picker: the index of private-server launcher configs hosted
+# in this repo (raw GitHub contents). Lives at the repo root as servers.json.
+LAUNCHER_SERVERS_INDEX_URL = (
+    "https://raw.githubusercontent.com/Ourouk/vanilla-wow-launcher/main/"
+    "servers.json"
+)
+
 if getattr(sys, "frozen", False):
     APP_DIR = os.path.dirname(os.path.abspath(sys.executable))
 else:

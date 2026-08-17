@@ -6,11 +6,11 @@
     "torrent_url": "https://dl.octowow.st/download/client.torrent",
     "news_url": "https://octowow.st/forum/octonews.php?mode=list&forum=2&limit=8",
     "featured_news_url": "https://octowow.st/forum/octonews.php?forum=35&mode=full",
-    "mods_registry_url": "https://raw.githubusercontent.com/Ourouk/octo-updater/main/examples/octowow_mods.json",
+    "mods_registry_url": "https://raw.githubusercontent.com/Ourouk/vanilla-wow-launcher/main/examples/octowow_mods.json",
     "addons_registry_url": "https://octowow.st/api/addons.json",
     "addons_registry_urls": [
       "https://octowow.st/api/addons.json",
-      "https://raw.githubusercontent.com/Ourouk/octo-updater/main/examples/octowow_addons.json"
+      "https://raw.githubusercontent.com/Ourouk/vanilla-wow-launcher/main/examples/octowow_addons.json"
     ]
   },
   "theme": {

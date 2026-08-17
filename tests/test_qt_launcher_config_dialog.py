@@ -14,7 +14,13 @@ import pytest
 
 pytest.importorskip("PySide6")
 
-from PySide6.QtWidgets import QDialog, QLabel, QLineEdit, QPushButton
+from PySide6.QtWidgets import (
+    QDialog,
+    QLabel,
+    QLineEdit,
+    QListWidget,
+    QPushButton,
+)
 
 from vanilla_wow_launcher.ui.qt.app import create_qt_app
 from vanilla_wow_launcher.ui.qt.launcher_config_dialog import (
@@ -68,7 +74,9 @@ def test_ok_without_path_shows_error(qapp):
     dlg = LauncherConfigDialog()
     dlg.show()
     try:
-        dlg.findChild(QPushButton, "launcherConfigOk").click()
+        # Nothing selected: the OK button is disabled, so exercise the
+        # submit handler directly to verify it surfaces an error.
+        dlg._submit()
         assert dlg.result() != QDialog.DialogCode.Accepted
         error = dlg.findChild(QLabel, "launcherConfigError")
         assert error.isVisible()
@@ -132,5 +140,86 @@ def test_cancel_rejects(qapp):
     try:
         dlg.findChild(QPushButton, "launcherConfigCancel").click()
         assert dlg.result() == QDialog.DialogCode.Rejected
+    finally:
+        dlg.close()
+
+
+def test_empty_servers_shows_offline_status_and_disables_list(qapp):
+    dlg = LauncherConfigDialog(servers=[])
+    dlg.show()
+    try:
+        status = dlg.findChild(QLabel, "launcherConfigStatus")
+        assert status.isVisible()
+        assert "offline" in status.text().lower()
+        assert not dlg.findChild(
+            QListWidget, "launcherConfigServers"
+        ).isEnabled()
+    finally:
+        dlg.close()
+
+
+def test_server_selection_accepts_remote(qapp, monkeypatch):
+    import vanilla_wow_launcher.core.launcher as launcher_mod
+    import vanilla_wow_launcher.services.server_index as server_index_module
+
+    servers = [
+        {
+            "id": "octowow",
+            "name": "OctoWoW",
+            "config_url": "https://example.invalid/octowow.json",
+        }
+    ]
+    monkeypatch.setattr(
+        server_index_module,
+        "fetch_server_config",
+        lambda url: ({"server": {"base_url": "https://x"}}, "{}", ""),
+    )
+    monkeypatch.setattr(
+        launcher_mod, "validate_dict", lambda data: (object(), "")
+    )
+    dlg = LauncherConfigDialog(servers=servers)
+    dlg.show()
+    try:
+        dlg._list.setCurrentItem(dlg._list.item(0))
+        assert dlg._list.item(0).isSelected()
+        dlg.findChild(QPushButton, "launcherConfigOk").click()
+        assert dlg.result() == QDialog.DialogCode.Accepted
+        sel = dlg.selection()
+        assert sel is not None
+        assert sel["kind"] == "remote"
+        assert sel["config_url"] == "https://example.invalid/octowow.json"
+        assert sel["name"] == "OctoWoW"
+    finally:
+        dlg.close()
+
+
+def test_remote_fetch_failure_shows_error(qapp, monkeypatch):
+    import vanilla_wow_launcher.services.server_index as server_index_module
+
+    servers = [
+        {
+            "id": "octowow",
+            "name": "OctoWoW",
+            "config_url": "https://example.invalid/octowow.json",
+        }
+    ]
+    monkeypatch.setattr(
+        server_index_module,
+        "fetch_server_config",
+        lambda url: (
+            None,
+            None,
+            "Could not fetch the server configuration: boom",
+        ),
+    )
+    dlg = LauncherConfigDialog(servers=servers)
+    dlg.show()
+    try:
+        dlg._list.setCurrentItem(dlg._list.item(0))
+        dlg.findChild(QPushButton, "launcherConfigOk").click()
+        assert dlg.result() != QDialog.DialogCode.Accepted
+        error = dlg.findChild(QLabel, "launcherConfigError")
+        assert error.isVisible()
+        assert error.text()
     finally:
         dlg.close()

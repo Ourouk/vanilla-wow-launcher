@@ -101,6 +101,7 @@ def _panel(window) -> ModsPanel:
 
 
 def _post(hub, state):
+    hub.mods.state = state
     hub.dispatcher.post(ModsLoaded(state))
     QTest.qWait(200)
 
@@ -359,3 +360,39 @@ def test_badge_shows_update_count_and_hides_at_zero(qapp, window, hub):
 
     _post(hub, ModsState(updates_count=0))
     assert not badge.isVisible()
+
+
+# ── install-essential button ─────────────────────────────────────────────
+
+
+def test_install_essential_button_present_and_enabled_when_missing(
+    qapp, window, hub
+):
+    window.switch_tab("MODS")
+    panel = _panel(window)
+    btn = panel.findChild(QPushButton, "modsInstallRecommended")
+    assert btn is not None
+    # No records posted → the essential AlphaMod is not installed → enabled.
+    _post(hub, ModsState())
+    assert btn.isEnabled()
+
+
+def test_install_essential_button_disabled_when_all_installed(
+    qapp, window, hub
+):
+    window.switch_tab("MODS")
+    panel = _panel(window)
+    btn = panel.findChild(QPushButton, "modsInstallRecommended")
+    _post(hub, ModsState(records={"AlphaMod": ModState(present=True)}))
+    assert not btn.isEnabled()
+
+
+def test_install_essential_button_calls_controller(
+    qapp, window, hub, monkeypatch
+):
+    window.switch_tab("MODS")
+    panel = _panel(window)
+    install_mock = Mock()
+    monkeypatch.setattr(hub.mods, "apply_essential_mods", install_mock)
+    panel.findChild(QPushButton, "modsInstallRecommended").click()
+    install_mock.assert_called_once_with()

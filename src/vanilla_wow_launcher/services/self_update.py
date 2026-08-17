@@ -10,7 +10,7 @@ from ..core.helpers import parse_version
 from ..core.security_http import secure_urlopen
 
 # Self-update: the updater checks its own GitHub releases once a day.
-UPDATER_REPO = "rebasedkon/vanilla-wow-launcher"
+UPDATER_REPO = "Ourouk/vanilla-wow-launcher"
 UPDATER_CHECK_TTL = 86400  # 1 day, cached in the config file
 
 

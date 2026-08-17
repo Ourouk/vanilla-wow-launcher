@@ -347,6 +347,32 @@ def persist(path: str) -> tuple[str, str]:
     return dest, ""
 
 
+def persist_text(text: str) -> tuple[str, str]:
+    """Persist already-fetched, validated launcher config *text* into the
+    per-user directory, writing atomically (temp file + rename). Returns
+    (destination, error); exactly one is set. Used when the config was
+    obtained over the network rather than from a local file."""
+    dest = user_config_path()
+    try:
+        _derive(json.loads(text))  # don't persist truncated/invalid configs
+        directory = os.path.dirname(dest) or "."
+        os.makedirs(directory, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=directory, suffix=".tmp")
+        try:
+            os.close(fd)
+            with open(tmp, "w", encoding="utf-8") as f:
+                f.write(text)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, dest)
+        finally:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+    except Exception as e:
+        return "", f"Could not save the launcher configuration: {e}"
+    return dest, ""
+
+
 def validate_path(path: str) -> tuple["LauncherConfig | None", str]:
     """Validate a launcher config file WITHOUT storing it as the active config.
     Returns (config, error); exactly one is set. Never touches module globals."""
@@ -354,6 +380,17 @@ def validate_path(path: str) -> tuple["LauncherConfig | None", str]:
         with open(path, encoding="utf-8") as f:
             raw = json.load(f)
         return _derive(raw), ""
+    except Exception as e:
+        return None, str(e)
+
+
+def validate_dict(data) -> tuple["LauncherConfig | None", str]:
+    """Validate a launcher config *dict* WITHOUT storing it as the active
+    config. Returns (config, error); exactly one is set. Never touches module
+    globals. Used by the first-launch wizard to validate a config fetched
+    over the network before accepting it."""
+    try:
+        return _derive(data), ""
     except Exception as e:
         return None, str(e)
 

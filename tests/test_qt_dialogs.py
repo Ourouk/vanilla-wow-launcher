@@ -20,8 +20,6 @@ from unittest.mock import Mock
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import (
-    QCheckBox,
-    QDialog,
     QLabel,
     QLineEdit,
     QMessageBox,
@@ -31,11 +29,9 @@ from PySide6.QtWidgets import (
 
 import vanilla_wow_launcher.controllers.settings as settings_controller
 import vanilla_wow_launcher.core.platform_support as platform_support
-import vanilla_wow_launcher.ui.qt.main_window as mw
 from vanilla_wow_launcher.core.log_sink import log
 from vanilla_wow_launcher.state.events import LogMessage
 from vanilla_wow_launcher.ui.qt.app import create_qt_app
-from vanilla_wow_launcher.ui.qt.auto_install_dialog import AutoInstallDialog
 from vanilla_wow_launcher.ui.qt.bridge import ControllerHub
 from vanilla_wow_launcher.ui.qt.custom_addon_dialog import CustomAddonDialog
 from vanilla_wow_launcher.ui.qt.log_window import LogWindow
@@ -59,7 +55,6 @@ def hub(qapp):
     hub = ControllerHub()
     hub.settings.state.first_run = False
     hub.settings.state.first_run_av_pending = False
-    hub.settings.state.first_run_auto_install_pending = False
     yield hub
     hub.close()
 
@@ -294,11 +289,6 @@ def test_first_run_opens_settings_and_av_prompt(qapp, monkeypatch, tmp_path):
                 lambda *a, **k: (asked.append(True), QMessageBox.Yes)[1]
             ),
         )
-        # The first-run auto-install prompt fires before the AV prompt on the
-        # same settings close — skip it so only the AV flow is exercised.
-        _FakeAutoInstallDialog.created = 0
-        _FakeAutoInstallDialog.result = QDialog.Rejected
-        monkeypatch.setattr(mw, "AutoInstallDialog", _FakeAutoInstallDialog)
         allow = Mock()
         dismissed = Mock()
         monkeypatch.setattr(hub.settings, "allow_through_antivirus", allow)
@@ -309,160 +299,6 @@ def test_first_run_opens_settings_and_av_prompt(qapp, monkeypatch, tmp_path):
         assert asked
         allow.assert_called_once()
         dismissed.assert_called_once()
-    finally:
-        win.close()
-        hub.close()
-
-
-# ── first-run auto-install prompt ─────────────────────────────────────────
-
-
-class _FakeAutoInstallDialog:
-    """Stand-in for AutoInstallDialog used by MainWindow._maybe_prompt_auto_install.
-
-    Result / checkbox answers live on the class so each test can set them
-    before driving the prompt; `created` counts instantiations so tests can
-    assert whether the prompt was shown at all.
-    """
-
-    result = QDialog.Accepted
-    mods_checked = True
-    addons_checked = True
-    created = 0
-
-    def __init__(self, *args, **kwargs):
-        type(self).created += 1
-
-    def exec(self):
-        return self.result
-
-
-@pytest.fixture()
-def _isolated_config(monkeypatch, tmp_path):
-    """In-memory config store + a non-existent CONFIG_FILE so the settings
-    controller never touches the real per-user config."""
-    state = {"out_dir": "/tmp/game-folder"}
-    monkeypatch.setattr(
-        settings_controller.config_store, "load_config", lambda: state
-    )
-    monkeypatch.setattr(
-        settings_controller.config_store,
-        "update_config",
-        lambda mutator: (mutator(state), state)[1],
-    )
-    monkeypatch.setattr(
-        settings_controller, "CONFIG_FILE", str(tmp_path / "no-config.json")
-    )
-    return state
-
-
-def test_auto_install_dialog_defaults_and_properties(qapp):
-    dlg = AutoInstallDialog(Palette())
-    assert dlg.objectName() == "autoInstallDialog"
-    mods = dlg.findChild(QCheckBox, "autoInstallMods")
-    addons = dlg.findChild(QCheckBox, "autoInstallAddons")
-    assert mods is not None and mods.isChecked()
-    assert addons is not None and addons.isChecked()
-    assert dlg.mods_checked is True
-    assert dlg.addons_checked is True
-
-    mods.setChecked(False)
-    assert dlg.mods_checked is False
-    assert dlg.addons_checked is True
-
-
-def test_first_run_prompt_accept_installs_checked(
-    qapp, monkeypatch, _isolated_config
-):
-    hub = ControllerHub()
-    hub.settings.state.first_run = True
-    hub.settings.state.first_run_verify_pending = False
-    hub.settings.state.first_run_av_pending = False
-    hub.settings.state.first_run_auto_install_pending = True
-    _FakeAutoInstallDialog.created = 0
-    _FakeAutoInstallDialog.result = QDialog.Accepted
-    _FakeAutoInstallDialog.mods_checked = True
-    _FakeAutoInstallDialog.addons_checked = True
-    monkeypatch.setattr(mw, "AutoInstallDialog", _FakeAutoInstallDialog)
-
-    win = MainWindow(hub)
-    win.show()
-    try:
-        win._on_settings_finished()
-        assert _FakeAutoInstallDialog.created == 1
-        assert hub.settings.state.first_run_auto_install_pending is False
-        assert hub.settings.state.pending_auto_mods is True
-        assert hub.settings.state.pending_auto_addons is True
-    finally:
-        win.close()
-        hub.close()
-
-
-def test_first_run_prompt_accept_partial_install(
-    qapp, monkeypatch, _isolated_config
-):
-    hub = ControllerHub()
-    hub.settings.state.first_run_auto_install_pending = True
-    hub.settings.state.first_run_verify_pending = False
-    hub.settings.state.first_run_av_pending = False
-    _FakeAutoInstallDialog.created = 0
-    _FakeAutoInstallDialog.result = QDialog.Accepted
-    _FakeAutoInstallDialog.mods_checked = True
-    _FakeAutoInstallDialog.addons_checked = False
-    monkeypatch.setattr(mw, "AutoInstallDialog", _FakeAutoInstallDialog)
-
-    win = MainWindow(hub)
-    win.show()
-    try:
-        win._on_settings_finished()
-        assert hub.settings.state.pending_auto_mods is True
-        assert hub.settings.state.pending_auto_addons is False
-    finally:
-        win.close()
-        hub.close()
-
-
-def test_first_run_prompt_skip_disables_both(
-    qapp, monkeypatch, _isolated_config
-):
-    hub = ControllerHub()
-    hub.settings.state.first_run_auto_install_pending = True
-    hub.settings.state.first_run_verify_pending = False
-    hub.settings.state.first_run_av_pending = False
-    _FakeAutoInstallDialog.created = 0
-    _FakeAutoInstallDialog.result = QDialog.Rejected
-    monkeypatch.setattr(mw, "AutoInstallDialog", _FakeAutoInstallDialog)
-
-    win = MainWindow(hub)
-    win.show()
-    try:
-        win._on_settings_finished()
-        assert _FakeAutoInstallDialog.created == 1
-        assert hub.settings.state.first_run_auto_install_pending is False
-        assert hub.settings.state.pending_auto_mods is False
-        assert hub.settings.state.pending_auto_addons is False
-    finally:
-        win.close()
-        hub.close()
-
-
-def test_first_run_prompt_skipped_when_not_pending(
-    qapp, monkeypatch, _isolated_config
-):
-    hub = ControllerHub()
-    hub.settings.state.first_run_verify_pending = False
-    hub.settings.state.first_run_av_pending = False
-    hub.settings.state.first_run_auto_install_pending = False
-    _FakeAutoInstallDialog.created = 0
-    monkeypatch.setattr(mw, "AutoInstallDialog", _FakeAutoInstallDialog)
-
-    win = MainWindow(hub)
-    win.show()
-    try:
-        win._on_settings_finished()
-        assert _FakeAutoInstallDialog.created == 0
-        assert hub.settings.state.pending_auto_mods is False
-        assert hub.settings.state.pending_auto_addons is False
     finally:
         win.close()
         hub.close()

@@ -276,6 +276,25 @@ class AddonsPanel(ScrollListPanel):
         check.clicked.connect(self._on_check)
         footer_layout.addWidget(check)
 
+        self._recommended_button = QPushButton(
+            "★  Install Recommended", footer
+        )
+        self._recommended_button.setObjectName("addonsInstallRecommended")
+        self._recommended_button.setCursor(Qt.PointingHandCursor)
+        self._recommended_button.setStyleSheet(
+            f"QPushButton {{ color: {p.gold.name()};"
+            f" border: 1px solid {p.gold.name()}; border-radius: 4px;"
+            f" background-color: {p.panel_bdr.name()};"
+            f" padding: 4px 16px; font-weight: bold; }}"
+            f"QPushButton:hover {{ background-color: {p.gold.name()};"
+            f" color: {p.hdr.name()}; }}"
+            f"QPushButton:disabled {{ color: {p.text_dim.name()};"
+            f" border-color: {p.panel_bdr.name()};"
+            f" background-color: {p.panel.name()}; }}"
+        )
+        self._recommended_button.clicked.connect(self._on_install_recommended)
+        footer_layout.addWidget(self._recommended_button)
+
         footer_layout.addStretch(1)
 
         custom = ClickableLabel("+  Add custom git addon", footer)
@@ -349,6 +368,7 @@ class AddonsPanel(ScrollListPanel):
                     self._add_row(row)
 
         self._refresh_footer()
+        self._refresh_recommended_visibility()
 
     def _add_section_header(self, title: str, rows: list, state):
         p = self._palette
@@ -422,6 +442,10 @@ class AddonsPanel(ScrollListPanel):
         if self._addons.apply(self._addons.update_all()):
             self._render()
 
+    def _on_install_recommended(self):
+        if self._addons.apply_recommended_addons():
+            self._render()
+
     # ── footer ──────────────────────────────────────────────────────────────
 
     def _refresh_footer(self):
@@ -434,7 +458,17 @@ class AddonsPanel(ScrollListPanel):
             Qt.PointingHandCursor if clickable else Qt.ArrowCursor
         )
 
+    def _refresh_recommended_visibility(self):
+        """The 'Install Recommended' button is enabled only while there is at
+        least one recommended addon not yet installed and no install is
+        running — otherwise it greys out."""
+        installed = set(self._addons.state.addons)
+        remaining = set(self._addons.recommended) - installed
+        busy = bool(self._addons.state.busy)
+        self._recommended_button.setEnabled(bool(remaining) and not busy)
+
     # ── event hooks ────────────────────────────────────────────────────────
 
     def _after_operation(self):
         self._refresh_footer()
+        self._refresh_recommended_visibility()

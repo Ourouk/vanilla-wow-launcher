@@ -19,9 +19,6 @@ from vanilla_wow_launcher.state.events import (
 )
 
 # Small synthetic registries so tests don't depend on the real ones.
-MOD_ESS_A = {"id": "EssentialA", "essential": True, "name": "EssentialA"}
-MOD_ESS_B = {"id": "EssentialB", "essential": True, "name": "EssentialB"}
-MOD_OPT = {"id": "OptionalMod", "essential": False, "name": "OptionalMod"}
 
 
 class _FakeModsState:
@@ -181,7 +178,6 @@ def test_first_run_flags_initialized(cfg, monkeypatch):
     assert c.state.first_run is True
     assert c.state.first_run_verify_pending is True
     assert c.state.first_run_av_pending is False  # can_manage_antivirus → off
-    assert c.state.first_run_auto_install_pending is True
 
 
 def test_client_updates_default_to_enabled(cfg, fakes):
@@ -559,106 +555,6 @@ def test_check_mirror_http_error_still_online(controller, monkeypatch):
 
 def test_http_mirror_names_follow_launcher(controller):
     assert controller._http_mirror_names() == ["Backup"]
-
-
-# ── install-missing shortcuts ──────────────────────────────────────────────
-
-
-def test_install_missing_essential_mods_delegates(
-    controller, cfg, fakes, monkeypatch, tmp_path
-):
-    game = tmp_path / "game"
-    game.mkdir()
-    (game / "WoW.exe").write_bytes(b"MZ")
-    controller.state.path = str(game)
-    mods_cfg = {"EssentialA": {"installed_version": "1.0"}}
-    monkeypatch.setattr(
-        sc.config_store, "load_config", lambda: {"mods": mods_cfg}
-    )
-    monkeypatch.setattr(
-        sc.mods,
-        "mods_registry",
-        lambda *a, **k: [MOD_ESS_A, MOD_ESS_B, MOD_OPT],
-    )
-    monkeypatch.setattr(
-        sc.mods,
-        "mod_installed_files_present",
-        lambda mod, cd: mod["id"] == "EssentialA",
-    )
-
-    assert controller.install_missing_essential_mods() is True
-    assert fakes.mods.toggled == [("EssentialB", True)]
-    assert fakes.mods.applied == 1
-    events = controller._dispatcher.drain()
-    assert any("Installing essential mods" in t for t in _log_texts(events))
-
-
-def test_install_missing_essential_mods_noop_when_nothing_missing(
-    controller, cfg, fakes, monkeypatch, tmp_path
-):
-    game = tmp_path / "game"
-    game.mkdir()
-    (game / "WoW.exe").write_bytes(b"MZ")
-    controller.state.path = str(game)
-    monkeypatch.setattr(
-        sc.config_store,
-        "load_config",
-        lambda: {"mods": {"EssentialA": {"installed_version": "1.0"}}},
-    )
-    monkeypatch.setattr(sc.mods, "mods_registry", lambda *a, **k: [MOD_ESS_A])
-    monkeypatch.setattr(
-        sc.mods, "mod_installed_files_present", lambda mod, cd: True
-    )
-    assert controller.install_missing_essential_mods() is False
-    assert fakes.mods.applied == 0
-
-
-def test_install_missing_essential_mods_skips_without_client(
-    controller, fakes, tmp_path
-):
-    controller.state.path = str(tmp_path)  # no WoW.exe
-    assert controller.install_missing_essential_mods() is False
-    assert fakes.mods.applied == 0
-
-
-def test_install_missing_recommended_addons_delegates(
-    controller, cfg, fakes, monkeypatch, tmp_path
-):
-    game = tmp_path / "game"
-    game.mkdir()
-    (game / "WoW.exe").write_bytes(b"MZ")
-    controller.state.path = str(game)
-    ap = game / "Interface" / "AddOns"
-    ap.mkdir(parents=True)
-    (ap / "pfUI").mkdir()
-    monkeypatch.setattr(
-        sc.addons,
-        "RECOMMENDED_ADDONS",
-        {"pfUI": "https://x/pfUI", "ShaguTweaks": "https://x/ShaguTweaks"},
-    )
-    monkeypatch.setattr(sc.addons, "addons_path", lambda out: str(ap))
-
-    assert controller.install_missing_recommended_addons() is True
-    assert fakes.addons.recommended_recs == 1
-
-
-def test_install_missing_recommended_addons_noop_when_all_present(
-    controller, fakes, monkeypatch, tmp_path
-):
-    game = tmp_path / "game"
-    game.mkdir()
-    (game / "WoW.exe").write_bytes(b"MZ")
-    controller.state.path = str(game)
-    ap = game / "Interface" / "AddOns"
-    ap.mkdir(parents=True)
-    (ap / "pfUI").mkdir()
-    monkeypatch.setattr(sc.addons, "RECOMMENDED_ADDONS", {"pfUI": "url"})
-    monkeypatch.setattr(sc.addons, "addons_path", lambda out: str(ap))
-    monkeypatch.setattr(
-        controller._addons, "apply_recommended_addons", lambda: False
-    )
-    assert controller.install_missing_recommended_addons() is False
-    assert fakes.addons.applied == 0
 
 
 # ── open helpers ───────────────────────────────────────────────────────────

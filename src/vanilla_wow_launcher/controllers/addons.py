@@ -3,9 +3,9 @@
 Owns the ADDONS-panel business logic: the catalog fetch with its offline
 fallback, the Interface/AddOns scan with .toc parsing, the cached remote-sha
 verification (TTL-gated, cache-only on demand), the sequential
-install/update/remove worker, and the one-shot recommended-addons
-auto-install for a fresh game folder. Publishes snapshots as AddonsLoaded and
-worker outcomes as OperationFinished on the shared EventDispatcher; the Qt
+install/update/remove worker, and the recommended-addons install triggered by
+the panel's "Install Recommended" button. Publishes snapshots as AddonsLoaded
+and worker outcomes as OperationFinished on the shared EventDispatcher; the Qt
 Addons panel renders them. No GUI toolkit.
 """
 
