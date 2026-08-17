@@ -68,6 +68,7 @@ def test_settings_state_defaults():
     assert s.first_run is False
     assert s.first_run_av_pending is False
     assert s.first_run_verify_pending is False
+    assert s.first_run_auto_install_pending is False
 
 
 def test_app_state_defaults():
@@ -272,12 +273,14 @@ def test_settings_state_with_sample_data():
         first_run=True,
         first_run_av_pending=True,
         first_run_verify_pending=True,
+        first_run_auto_install_pending=True,
     )
     assert s.path == "C:/Games/WoW"
     assert s.config["out_dir"] == "C:/Games/WoW"
     assert s.first_run is True
     assert s.first_run_av_pending is True
     assert s.first_run_verify_pending is True
+    assert s.first_run_auto_install_pending is True
 
 
 def test_app_state_logging():

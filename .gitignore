@@ -11,6 +11,8 @@ __pycache__/
 *.egg-info/
 .venv/
 .pytest_cache/
+tests/tmp/*
+!tests/tmp/.gitkeep
 
 # PyInstaller build output
 build/
@@ -28,5 +30,4 @@ Thumbs.db
 .DS_Store
 
 # Vendored reference source (third-party, not part of the package)
-context/OctoLauncher/
-
+context/*

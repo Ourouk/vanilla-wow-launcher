@@ -37,7 +37,6 @@ class ModsController:
     def __init__(self, dispatcher: EventDispatcher, get_out_dir=None):
         self._dispatcher = dispatcher
         self.state = ModsState()
-        self._default_mods_install_started = False
         self._busy = False
         if get_out_dir is None:
 
@@ -140,39 +139,6 @@ class ModsController:
         ).start()
         return True
 
-    def maybe_install_essential_mods(self) -> bool:
-        """One-shot auto-install of every essential mod for a fresh game
-        folder. Re-armed by reset() (a game-folder change). Returns True when
-        an install actually started."""
-        if self._default_mods_install_started:
-            return False
-
-        cfg = config_store.load_config()
-        if cfg.get("mods"):
-            return False  # already initialized for this folder
-
-        out = (self._get_out_dir() or "").strip()
-        if not out or not os.path.exists(os.path.join(out, "WoW.exe")):
-            return False  # game isn't actually installed here yet
-
-        self._default_mods_install_started = True
-
-        # "Install essential mods" (Settings → General) gates the essential
-        # set. Every mod comes from the configured catalog — nothing is
-        # hardcoded.
-        auto_mods = cfg.get("auto_install_mods", True)
-        for mod in mods.mods_registry():
-            if mod.get("essential", False) and auto_mods:
-                self.state.pending.setdefault(
-                    mod["id"], ModPending()
-                ).enabled = True
-
-        self._dispatcher.post(
-            LogMessage("\nInstalling essential mods...\n", "acct")
-        )
-        self.apply()
-        return True
-
     def invalidate(self):
         """Drop the cached latest versions; the next load refetches."""
         self.state.latest_versions = {}
@@ -188,12 +154,11 @@ class ModsController:
         self._dispatcher.post(ModsLoaded(self.state))
 
     def reset(self):
-        """Clear pending changes, drop cached versions and re-arm the one-shot
-        auto-install (called when the game folder changes)."""
+        """Clear pending changes and drop cached versions (a game-folder
+        change or a recheck)."""
         self.state.pending = {}
         self.state.latest_versions = {}
         self.state.updates_count = 0
-        self._default_mods_install_started = False
         self.state.records, self.state.unknown = self._load_records()
 
     # ── internals ───────────────────────────────────────────────────────────

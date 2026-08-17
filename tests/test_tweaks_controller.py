@@ -1,9 +1,9 @@
 """Unit tests for the tweaks controller (tweaks_controller).
 
 No Tk involved: the controller is driven directly and its effects are read
-from the shared EventDispatcher. Backends (config store, WoW.exe patcher,
-Config.wtf writer, platform gating) are swapped for fakes via monkeypatch so
-nothing touches the real filesystem or config.
+from the shared EventDispatcher. Backends (config store, Config.wtf writer)
+are swapped for fakes via monkeypatch so nothing touches the real filesystem
+or config.
 """
 
 import time
@@ -23,21 +23,9 @@ from vanilla_wow_launcher.state.events import (
 )
 
 
-class FakeUpdateWorker:
-    """Stand-in for client_update.UpdateWorker so apply never touches the
-    real exe-patching machinery."""
-
-    def __init__(self, *args, **kwargs):
-        self.patched = None
-
-    def patch_exe(self, tweaks):
-        self.patched = tweaks
-
-
 @pytest.fixture
 def backends(monkeypatch):
-    """Shared fake backends: config store + Config.wtf writer + non-Windows
-    platform gating (so apply takes the Config.wtf-only path)."""
+    """Shared fake backends: config store + Config.wtf writer."""
     state = {"out_dir": "/tmp/octo-game"}
     monkeypatch.setattr(tc.config_store, "load_config", lambda: state)
     monkeypatch.setattr(
@@ -61,8 +49,6 @@ def backends(monkeypatch):
         "save_tweaks_config",
         lambda values: state.__setitem__("tweaks", values),
     )
-    monkeypatch.setattr(tc.platform_support, "can_patch_client", lambda: False)
-    monkeypatch.setattr(tc.client_update, "UpdateWorker", FakeUpdateWorker)
     return state
 
 
@@ -133,13 +119,13 @@ def test_validate_entries_unparseable_falls_back_to_default(controller):
 def test_validate_entries_bools_normalized(controller):
     any_bad, ui = controller.validate_entries(
         {
-            "alwaysAutoLoot": "True",
-            "soundInBackground": 0,
+            "soundInBackground": "True",
+            "nameplateRange": "41",
         }
     )
     assert any_bad is False
-    assert ui["alwaysAutoLoot"] is True
-    assert ui["soundInBackground"] is False
+    assert ui["soundInBackground"] is True
+    assert ui["nameplateRange"] == 41
 
 
 def test_validate_entries_clean_ui_is_not_bad(controller):
@@ -178,22 +164,20 @@ def test_dirty_and_custom_out_of_range_is_dirty_even_if_clamped_equal(
     # out-of-range case from the Tk comment: saved 180, typed 192 clamps to
     # 180 — dirty must still be True because the entry is bad.
     backends["tweaks"] = {
-        "alwaysAutoLoot": True,
+        "soundInBackground": True,
         "nameplateRange": 41,
         "fieldOfView": 180,
         "farClip": 777,
         "frillDistance": 70,
         "cameraDistance": 50,
-        "soundInBackground": True,
     }
     ui = {
-        "alwaysAutoLoot": True,
+        "soundInBackground": True,
         "nameplateRange": 41,
         "fieldOfView": "192",
         "farClip": 777,
         "frillDistance": 70,
         "cameraDistance": 50,
-        "soundInBackground": True,
     }
     dirty, custom = controller.dirty_and_custom(ui)
     assert dirty is True
@@ -206,7 +190,6 @@ def test_dirty_and_custom_out_of_range_is_dirty_even_if_clamped_equal(
 def test_apply_persists_clamped_and_posts_finished(controller, backends):
     spawned = controller.apply(
         {
-            "alwaysAutoLoot": True,
             "nameplateRange": 41,
             "fieldOfView": "500",
             "farClip": 777,
@@ -223,32 +206,17 @@ def test_apply_persists_clamped_and_posts_finished(controller, backends):
     )
     assert OperationFinished("tweaks", True, "") in collected
     assert LogMessage("\nTweaks applied.\n", "ok") in collected
-    assert (
-        LogMessage(
-            "Binary WoW.exe tweaks are only applied on Windows; "
-            "writing Config.wtf only.\n",
-            "dim",
-        )
-        in collected
-    )
     assert any(isinstance(e, LogMessage) for e in collected)
     assert controller.running is False
 
 
-def test_apply_patches_exe_on_windows(
-    controller, backends, monkeypatch, tmp_path
-):
-    game = tmp_path / "game"
-    game.mkdir()
-    (game / "WoW.exe").write_bytes(b"MZ")
-    controller._get_out_dir = lambda: str(game)
-    calls = []
-    patched = FakeUpdateWorker()
-    patched.patch_exe = lambda t: calls.append(t)
-    monkeypatch.setattr(
-        tc.client_update, "UpdateWorker", lambda *a, **k: patched
-    )
-    monkeypatch.setattr(tc.platform_support, "can_patch_client", lambda: True)
+def test_apply_writes_config_wtf(controller, backends, monkeypatch):
+    written = []
+
+    def record(client_dir, tweak_values):
+        written.append((client_dir, tweak_values))
+
+    monkeypatch.setattr(tc.tweaks, "update_config_wtf", record)
 
     values = dict(TWEAKS_DEFAULTS)
     values["fieldOfView"] = fov_default_for_display()
@@ -257,7 +225,7 @@ def test_apply_patches_exe_on_windows(
     _drain_for(
         controller._dispatcher, lambda e: isinstance(e, OperationFinished)
     )
-    assert calls == [values]
+    assert written == [(backends["out_dir"], values)]
 
 
 def test_apply_without_folder_posts_error_and_does_not_spawn(
@@ -330,8 +298,7 @@ def test_reset_builds_defaults_when_omitted(controller, backends):
     assert backends["tweaks"]["fieldOfView"] == fov_default_for_display()
 
 
-def test_reset_without_folder_is_noop(controller, backends, monkeypatch):
+def test_reset_without_folder_is_noop(controller, backends):
     backends["out_dir"] = ""
-    monkeypatch.setattr(tc.platform_support, "can_patch_client", lambda: True)
     assert controller.reset() is False
     assert controller._dispatcher.drain() == []

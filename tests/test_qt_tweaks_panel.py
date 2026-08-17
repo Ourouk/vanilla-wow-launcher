@@ -84,24 +84,21 @@ def _entry(panel, tid) -> QLineEdit:
 
 
 def test_panel_replaces_the_tweaks_placeholder(qapp, window):
-    assert window._pages == {"NEWS": 0, "TWEAKS": 1, "ADDONS": 2, "MODS": 3}
+    assert window._pages["UPDATE"] == MainWindow.TABS.index("UPDATE")
     panel = _panel(window)
     assert panel.objectName() == "tweaksPanel"
     # A checkbox row and a number row exist for known tweak ids.
-    assert _check(panel, "alwaysAutoLoot") is not None
+    assert _check(panel, "soundInBackground") is not None
     assert _entry(panel, "fieldOfView") is not None
-    assert (
-        panel.findChild(QCheckBox, "tweaksCheck_soundInBackground") is not None
-    )
     assert _entry(panel, "cameraDistance") is not None
 
 
 def test_rows_reflect_saved_config(qapp, window, tweak_backend):
     panel = _panel(window)
-    assert _check(panel, "alwaysAutoLoot").isChecked() is True
-    tweak_backend["alwaysAutoLoot"] = False
+    assert _check(panel, "soundInBackground").isChecked() is True
+    tweak_backend["soundInBackground"] = False
     panel._refresh_from_config()
-    assert _check(panel, "alwaysAutoLoot").isChecked() is False
+    assert _check(panel, "soundInBackground").isChecked() is False
     assert _entry(panel, "fieldOfView").text() == "110"
 
 
@@ -161,11 +158,11 @@ def test_checkbox_change_makes_apply_visible_and_revert_hides_it(qapp, window):
     assert not panel._apply_button.isVisible()
     assert not panel._reset_button.isVisible()
 
-    _check(panel, "alwaysAutoLoot").setChecked(False)
+    _check(panel, "soundInBackground").setChecked(False)
     assert panel._apply_button.isVisible()
     assert panel._reset_button.isVisible()
 
-    _check(panel, "alwaysAutoLoot").setChecked(True)
+    _check(panel, "soundInBackground").setChecked(True)
     assert not panel._apply_button.isVisible()
     assert not panel._reset_button.isVisible()
 
@@ -192,17 +189,16 @@ def test_apply_calls_controller_with_clamped_values(qapp, window, monkeypatch):
     monkeypatch.setattr(tc.TweaksController, "apply", apply_mock)
 
     # A dirty change first, so the Apply button is live.
-    _check(panel, "alwaysAutoLoot").setChecked(False)
+    _check(panel, "soundInBackground").setChecked(False)
     _entry(panel, "fieldOfView").setText("500")  # clamped to 180 on apply
 
     panel._apply_button.click()
 
     assert apply_mock.call_count == 1
     values = apply_mock.call_args.args[0]
-    assert values["alwaysAutoLoot"] is False
+    assert values["soundInBackground"] is False
     assert values["fieldOfView"] == 180
     assert values["nameplateRange"] == 41
-    assert values["soundInBackground"] is True
 
 
 def test_reset_calls_controller_and_refreshes_form(qapp, window, monkeypatch):
@@ -211,7 +207,7 @@ def test_reset_calls_controller_and_refreshes_form(qapp, window, monkeypatch):
     reset_mock = Mock(return_value=False)
     monkeypatch.setattr(tc.TweaksController, "reset", reset_mock)
 
-    _check(panel, "alwaysAutoLoot").setChecked(False)
+    _check(panel, "soundInBackground").setChecked(False)
     assert panel._apply_button.isVisible()
 
     panel._reset_button.click()
@@ -219,7 +215,7 @@ def test_reset_calls_controller_and_refreshes_form(qapp, window, monkeypatch):
     assert reset_mock.call_count == 1
     assert reset_mock.call_args.args == ()
     # The form is refreshed from the (unchanged) saved config.
-    assert _check(panel, "alwaysAutoLoot").isChecked() is True
+    assert _check(panel, "soundInBackground").isChecked() is True
     assert _entry(panel, "fieldOfView").text() == "110"
     assert not panel._apply_button.isVisible()
 

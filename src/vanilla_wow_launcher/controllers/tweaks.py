@@ -2,21 +2,18 @@
 
 Owns the TWEAKS-panel business logic: reading the saved tweak values,
 clamping the UI entries, deciding when Apply/Reset are offered, and the
-apply/reset workers (WoW.exe patch on Windows + Config.wtf update + the
-patched-hash bookkeeping). Speaks to the UI only through events on the shared
-EventDispatcher: LogMessage for every log line, ProgressChanged when the
-worker reports progress, and OperationFinished(kind="tweaks") at the end
-(plus OperationFailed on an exception). No GUI toolkit.
+apply/reset workers (Config.wtf update). Runtime client fixes are left to the
+VanillaFixes loader mod; the launcher never patches WoW.exe. Speaks to the UI
+only through events on the shared EventDispatcher: LogMessage for every log
+line and OperationFinished(kind="tweaks") at the end (plus OperationFailed on
+an exception). No GUI toolkit.
 """
 
-import os
-import queue
 import threading
 
-from ..core import config_store, platform_support
+from ..core import config_store
 from ..core.constants import DEFAULT_OUT_DIR
-from ..core.filesystem import sha1_file
-from ..services import client_update, tweaks
+from ..services import tweaks
 from ..services.tweaks import (
     TWEAKS_DEFAULTS,
     TWEAKS_LIMITS,
@@ -27,7 +24,6 @@ from ..state.events import (
     LogMessage,
     OperationFailed,
     OperationFinished,
-    ProgressChanged,
 )
 
 
@@ -138,16 +134,8 @@ class TweaksController:
         if not out:
             self._dispatcher.post(LogMessage("Game folder not set.\n", "err"))
             return False
-        exe = os.path.join(out, "WoW.exe")
-        if platform_support.can_patch_client() and not os.path.exists(exe):
-            self._dispatcher.post(
-                LogMessage("WoW.exe not found — run Update first.\n", "err")
-            )
-            return False
 
-        self._dispatcher.post(
-            LogMessage("\nApplying tweaks to WoW.exe...\n", "acct")
-        )
+        self._dispatcher.post(LogMessage("\nApplying tweaks…\n", "acct"))
         self._start_worker(clamped)
         return True
 
@@ -155,9 +143,8 @@ class TweaksController:
         """Save the tweak defaults and re-apply them.
 
         When `defaults` is omitted it is built from TWEAKS_DEFAULTS with the
-        display-detected FOV default. Returns True when a worker was spawned.
-        No "Applying tweaks…" line is logged; on Windows the exe patch needs
-        WoW.exe present, elsewhere any set folder suffices.
+        display-detected FOV default. Returns True when a worker was spawned;
+        a set game folder is required.
         """
         if self._running:
             return False
@@ -167,11 +154,7 @@ class TweaksController:
         tweaks.save_tweaks_config(defaults)
 
         out = (self._get_out_dir() or "").strip()
-        if platform_support.can_patch_client():
-            needs_exe = os.path.exists(os.path.join(out, "WoW.exe"))
-        else:
-            needs_exe = bool(out)
-        if not needs_exe:
+        if not out:
             return False
         self._start_worker(defaults)
         return True
@@ -188,88 +171,22 @@ class TweaksController:
         ).start()
 
     def _run_apply_worker(self, client_dir: str, tweak_values: dict):
-        """Thread wrapper that always clears the re-entry guard, even when a
-        patched/stubbed worker body raises."""
+        """Thread wrapper that always clears the re-entry guard, even when the
+        worker body raises."""
         try:
             self._apply_worker(client_dir, tweak_values)
         finally:
             self._running = False
 
     def _apply_worker(self, client_dir: str, tweak_values: dict):
-        """The tweaks worker: patch WoW.exe (Windows), write Config.wtf,
-        update the patched-hash bookkeeping, and report the outcome through
-        events."""
-        log_q = queue.Queue()
-        prog_q = queue.Queue()
-        worker = client_update.UpdateWorker(client_dir, log_q, prog_q)
+        """The tweaks worker: write Config.wtf and report the outcome."""
         try:
-            exe_path = os.path.join(client_dir, "WoW.exe")
-
-            fresh_cfg = config_store.load_config()
-            expected_patched = fresh_cfg.get("expected_patched_wow_hash", "")
-            original_server = fresh_cfg.get("original_server_wow_hash", "")
-            local_before = (
-                sha1_file(exe_path) if os.path.exists(exe_path) else ""
-            )
-
-            if platform_support.can_patch_client():
-                worker.patch_exe(tweak_values)
-                self._drain_logs(log_q)
-                self._drain_progress(prog_q)
-            else:
-                # Binary tweaks target Windows offsets — on other platforms
-                # only the Config.wtf settings are applied.
-                self._dispatcher.post(
-                    LogMessage(
-                        "Binary WoW.exe tweaks are only applied on Windows; "
-                        "writing Config.wtf only.\n",
-                        "dim",
-                    )
-                )
-
             tweaks.update_config_wtf(client_dir, tweak_values)
-
-            local_after = (
-                sha1_file(exe_path) if os.path.exists(exe_path) else ""
-            )
-
-            def _set_hashes(c):
-                c["expected_patched_wow_hash"] = local_after
-                if local_before == expected_patched and original_server:
-                    c["original_server_wow_hash"] = original_server
-                else:
-                    c.pop("original_server_wow_hash", None)
-
-            config_store.update_config(_set_hashes)
-
             self._dispatcher.post(LogMessage("\nTweaks applied.\n", "ok"))
             self._dispatcher.post(OperationFinished("tweaks", True, ""))
         except Exception as e:
-            self._drain_logs(log_q)
             self._dispatcher.post(
-                LogMessage(f"\n✗ Tweak patch failed: {e}\n", "err")
+                LogMessage(f"\n✗ Tweak apply failed: {e}\n", "err")
             )
             self._dispatcher.post(OperationFailed("tweaks", str(e)))
             self._dispatcher.post(OperationFinished("tweaks", False, str(e)))
-
-    def _drain_logs(self, log_q: queue.Queue):
-        """Forward the UpdateWorker's log lines to the dispatcher as
-        LogMessage events (skipping the __-prefixed protocol markers)."""
-        try:
-            while True:
-                msg, tag = log_q.get_nowait()
-                if msg not in ("__DONE__", "__ERROR__") and not msg.startswith(
-                    "__"
-                ):
-                    self._dispatcher.post(LogMessage(msg, tag))
-        except queue.Empty:
-            pass
-
-    def _drain_progress(self, prog_q: queue.Queue):
-        """Forward any worker progress reports as ProgressChanged events."""
-        try:
-            while True:
-                value, label = prog_q.get_nowait()
-                self._dispatcher.post(ProgressChanged(value, label))
-        except queue.Empty:
-            pass

@@ -51,7 +51,6 @@ class AddonsController:
         self._dispatcher = dispatcher
         self.state = AddonsState()
         self._recommended = set(addons.RECOMMENDED_ADDONS)
-        self._default_addons_install_started = False
         if get_out_dir is None:
 
             def get_out_dir():
@@ -425,52 +424,46 @@ class AddonsController:
         self._dispatcher.post(AddonsLoaded(self.state))
         self._dispatcher.post(OperationFinished("addons_verify", True, ""))
 
-    def maybe_install_default_addons(self) -> bool:
-        """One-shot auto-install of every recommended addon for a fresh game
-        folder. Re-armed by reset() (a game-folder change). Returns True when
-        a verify or install actually started."""
-        if self._default_addons_install_started:
+    def apply_recommended_addons(self) -> bool:
+        """Install every recommended addon (from catalog + constant) not yet
+        present. Returns True when an install actually started."""
+        if self.state.busy:
             return False
-        if config_store.load_config().get("addons") is not None:
-            return False  # already initialized for this folder
-
-        out = (self._get_out_dir() or "").strip()
-        if not out or not os.path.exists(os.path.join(out, "WoW.exe")):
-            return False  # game isn't actually installed here yet
-
-        self._default_addons_install_started = True
-
-        # Mark this folder as initialized even if every install fails, so
-        # the batch doesn't re-fire on the next verify.
-        config_store.update_config(lambda c: c.setdefault("addons", {}))
-
-        # "Install recommended addons" (Settings → General): when off, skip
-        # the batch install but still verify so the ADDONS tab lists them.
-        if not config_store.load_config().get("auto_install_addons", True):
-            self.verify()
-            return True
-
-        ap = addons.addons_path(out)
-        recs = [
-            {
-                "folder": name,
-                "status": "available",
-                "git": url,
-                "branch": None,
-                "ref": None,
-                "toc": {},
-                "description": None,
-                "error": None,
-            }
-            for name, url in addons.RECOMMENDED_ADDONS.items()
-            if not os.path.isdir(os.path.join(ap, name))
-        ]
+        client = (self._get_out_dir() or "").strip()
+        if not client or not os.path.exists(os.path.join(client, "WoW.exe")):
+            return False
+        # If the recommended set only has the constant (empty by default) and
+        # the available list is empty, force a catalog fetch so the recommended
+        # set gets populated from the server's catalog.
+        if not self.state.available and self._recommended == set(
+            addons.RECOMMENDED_ADDONS
+        ):
+            self._ensure_catalog_loaded()
+        ap = addons.addons_path(client)
+        recs = []
+        for name in sorted(self._recommended):
+            if os.path.isdir(os.path.join(ap, name)):
+                continue
+            rec = next(
+                (r for r in self.state.available if r.folder == name), None
+            )
+            if rec is not None:
+                recs.append(dict(rec))
+            elif name in addons.RECOMMENDED_ADDONS:
+                recs.append(
+                    {
+                        "folder": name,
+                        "status": "available",
+                        "git": addons.RECOMMENDED_ADDONS[name],
+                        "branch": None,
+                        "ref": None,
+                        "toc": {},
+                        "description": None,
+                        "error": None,
+                    }
+                )
         if not recs:
-            # Nothing to install (e.g. a folder that already has the addons)
-            # — still run a verify so the ADDONS tab badge shows any
-            # available updates without the user opening the tab.
-            self.verify()
-            return True
+            return False
         self._dispatcher.post(
             LogMessage("\nInstalling recommended addons...\n", "acct")
         )
@@ -478,9 +471,8 @@ class AddonsController:
         return True
 
     def reset(self):
-        """Drop the session verify TTL/content and re-arm the one-shot
-        auto-install (called when the game folder changes). The section
-        open/closed state is intentionally preserved."""
+        """Drop the session verify TTL/content (called when the game folder
+        changes). The section open/closed state is intentionally preserved."""
         self.state.verified_ts = 0.0
         self.state.state = "idle"
         self.state.addons = {}
@@ -488,7 +480,6 @@ class AddonsController:
         self.state.errors = {}
         self.state.updates_count = 0
         self._recommended = set(addons.RECOMMENDED_ADDONS)
-        self._default_addons_install_started = False
 
     def invalidate(self):
         """Drop the verify TTL so the next verify() rescans and rebuilds the
@@ -505,6 +496,63 @@ class AddonsController:
         ):
             return "Update all", C_OK, "hand2"
         return "Everything up to date", C_TEXT_DIM, "arrow"
+
+    def _ensure_catalog_loaded(self):
+        """Force a catalog fetch and populate _recommended and state.available.
+        Used by apply_recommended_addons on first run when the catalog hasn't
+        been fetched yet."""
+        try:
+            catalog = addons.addons_catalog(force=True)
+        except Exception:
+            catalog = addons.catalog_from_cache()
+
+        blocked = set(addons.BLOCKED_ADDONS)
+        recommended = set(addons.RECOMMENDED_ADDONS)
+        available = []
+        by_name = {}
+        for a in catalog:
+            name = a.get("name")
+            if not name:
+                continue
+            if a.get("blocked"):
+                blocked.add(name)
+            if a.get("recommended"):
+                recommended.add(name)
+            if name in blocked:
+                continue
+            rec = {
+                "folder": name,
+                "status": "available",
+                "git": a.get("git"),
+                "branch": a.get("branch"),
+                "ref": a.get("ref"),
+                "toc": a.get("toc") or {},
+                "description": a.get("description"),
+                "error": None,
+            }
+            available.append(rec)
+            by_name[name] = rec
+
+        for name, override in addons.RECOMMENDED_ADDONS.items():
+            rec = by_name.get(name)
+            if rec is None:
+                available.append(
+                    {
+                        "folder": name,
+                        "status": "available",
+                        "git": override,
+                        "branch": None,
+                        "ref": None,
+                        "toc": {},
+                        "description": None,
+                        "error": None,
+                    }
+                )
+            elif not same_git_repo(rec.get("git"), override):
+                rec.update(git=override, branch=None, ref=None)
+
+        self._recommended = recommended
+        self.state.available = [AddonState.from_dict(rec) for rec in available]
 
     # ── internals ───────────────────────────────────────────────────────────
 

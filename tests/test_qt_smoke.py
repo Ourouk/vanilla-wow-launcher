@@ -23,7 +23,7 @@ from unittest.mock import Mock
 
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QLabel, QWidget
+from PySide6.QtWidgets import QDialog, QLabel, QWidget
 
 import vanilla_wow_launcher.controllers.news as news_controller
 import vanilla_wow_launcher.controllers.settings as settings_controller
@@ -34,6 +34,7 @@ import vanilla_wow_launcher.core.platform_support as platform_support
 import vanilla_wow_launcher.services.addons as addons_module
 import vanilla_wow_launcher.services.mods as mods_module
 import vanilla_wow_launcher.services.news as news_module
+import vanilla_wow_launcher.ui.qt.main_window as mw
 from vanilla_wow_launcher.state.events import (
     AddonsLoaded,
     ModsLoaded,
@@ -245,8 +246,8 @@ def _wait_until(predicate, timeout_ms=4000):
 def test_construction_builds_full_app(qapp, app):
     win = app._window
     assert win.windowTitle() == "Vanilla WoW Launcher"
-    assert win._stack.count() == 4
-    assert win._pages == {"NEWS": 0, "TWEAKS": 1, "ADDONS": 2, "MODS": 3}
+    assert win._stack.count() == 5
+    assert win._pages["UPDATE"] == mw.MainWindow.TABS.index("UPDATE")
     assert win._stack.currentIndex() == 0
     assert win._navButtons["NEWS"].isChecked()
     assert win._gearButton is not None
@@ -285,9 +286,9 @@ def test_news_panel_auto_renders_loading_state(qapp, app):
 def test_startup_schedule_runs_the_full_launch_chain(qapp, app):
     win = app._window
     hub = app._hub
-    news_panel = win._stack.widget(0)
-    mods_panel = win._stack.widget(3)
-    addons_panel = win._stack.widget(2)
+    news_panel = win._stack.widget(mw.MainWindow.TABS.index("NEWS"))
+    mods_panel = win._stack.widget(mw.MainWindow.TABS.index("MODS"))
+    addons_panel = win._stack.widget(mw.MainWindow.TABS.index("ADDONS"))
 
     # 300 ms → background verify; 2000 ms → self-update check (the real
     # check_updater_update runs — the timer captured the bound method — so
@@ -322,7 +323,9 @@ def test_startup_schedule_runs_the_full_launch_chain(qapp, app):
     assert addons_panel._rows.get("pfUI") is not None
 
 
-def test_first_run_defers_verify_until_settings_close(qapp, build_app):
+def test_first_run_defers_verify_until_settings_close(
+    qapp, build_app, monkeypatch
+):
     app = build_app(first_run=True)
     try:
         win = app._window
@@ -335,7 +338,17 @@ def test_first_run_defers_verify_until_settings_close(qapp, build_app):
         assert win._settingsDialog.isVisible()
         hub.updater.start_verify.assert_not_called()
 
-        # Closing it arms the deferred verify (overwrite_config=True).
+        # Closing it arms the deferred verify (overwrite_config=True). The
+        # first-run auto-install prompt fires on the same close — patch it so
+        # it doesn't block the offscreen event loop.
+        class _SkipAutoInstallDialog:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def exec(self):
+                return QDialog.Rejected
+
+        monkeypatch.setattr(mw, "AutoInstallDialog", _SkipAutoInstallDialog)
         win._settingsDialog.close()
         _wait_until(lambda: hub.updater.start_verify.call_count == 1)
         hub.updater.start_verify.assert_called_once_with(True)
@@ -350,12 +363,13 @@ def test_first_run_defers_verify_until_settings_close(qapp, build_app):
 
 def test_nav_buttons_switch_tabs_and_expose_panels(qapp, app_no_startup):
     win = app_no_startup._window
-    for name, index, obj in (
-        ("NEWS", 0, "newsPanel"),
-        ("TWEAKS", 1, "tweaksPanel"),
-        ("ADDONS", 2, "addonsPanel"),
-        ("MODS", 3, "modsPanel"),
+    for name, obj in (
+        ("NEWS", "newsPanel"),
+        ("TWEAKS", "tweaksPanel"),
+        ("ADDONS", "addonsPanel"),
+        ("MODS", "modsPanel"),
     ):
+        index = mw.MainWindow.TABS.index(name)
         QTest.mouseClick(win._navButtons[name], Qt.LeftButton)
         assert win._stack.currentIndex() == index
         assert win._navButtons[name].isChecked()

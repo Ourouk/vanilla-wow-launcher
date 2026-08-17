@@ -94,8 +94,8 @@ def _news_panel(window):
 
 
 def test_news_panel_replaces_the_news_placeholder(qapp, window):
-    assert window._stack.count() == 4
-    assert window._pages == {"NEWS": 0, "TWEAKS": 1, "ADDONS": 2, "MODS": 3}
+    assert window._stack.count() == 5
+    assert window._pages["UPDATE"] == MainWindow.TABS.index("UPDATE")
     panel = window._stack.widget(window._pages["NEWS"])
     assert isinstance(panel, NewsPanel)
     assert panel.objectName() == "newsPanel"

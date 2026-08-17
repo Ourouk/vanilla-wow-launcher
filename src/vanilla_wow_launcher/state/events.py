@@ -8,7 +8,7 @@ handlers; `qt_bridge.ControllerBridge` converts them into Qt signals.
 
 import queue
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 class Event:
@@ -36,6 +36,15 @@ class ProgressChanged(Event):
 
     value: float
     label: str = ""
+    phase: str = ""
+    transport: str = ""
+    current_file: str = ""
+    downloaded: int = 0
+    total: int = 0
+    speed: float = 0.0
+    peers: int = 0
+    verified_pieces: int = 0
+    total_pieces: int = 0
 
 
 @dataclass
@@ -83,6 +92,13 @@ class OperationFailed(Event):
 
     kind: str
     message: str = ""
+
+
+@dataclass
+class UpdateFilesList(Event):
+    """List of files identified as updated (from diff tree or torrent stale set)."""
+
+    files: list[str] = field(default_factory=list)
 
 
 @dataclass

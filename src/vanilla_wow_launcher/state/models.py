@@ -20,10 +20,22 @@ class UpdateState:
     status: str = "Ready to update"
     progress: float = 0.0
     progress_label: str = ""
+    progress_phase: str = ""
+    progress_transport: str = ""
+    progress_file: str = ""
+    progress_downloaded: int = 0
+    progress_total: int = 0
+    progress_speed: float = 0.0
+    progress_peers: int = 0
+    progress_verified_pieces: int = 0
+    progress_total_pieces: int = 0
     running: bool = False
     client_ready: bool = False
     manifest_available: bool = False
     diff_nodes: list | None = None
+    torrent_stale: list | None = None
+    torrent_reachable: bool | None = None
+    torrent_error: str | None = None
     client_version: str = ""
     game_running: bool = False
     game_pid: int | None = None
@@ -200,6 +212,11 @@ class SettingsState:
     first_run: bool = False
     first_run_av_pending: bool = False
     first_run_verify_pending: bool = False
+    first_run_auto_install_pending: bool = False
+    # Session-only pending install choices from the first-run prompt. Not
+    # persisted to config — cleared once the install runs or the session ends.
+    pending_auto_mods: bool = False
+    pending_auto_addons: bool = False
 
 
 @dataclass

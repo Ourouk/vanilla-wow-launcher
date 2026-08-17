@@ -21,10 +21,14 @@ from ..core.filesystem import (
 )
 from ..core.log_sink import debug_emit
 from ..core.platform_support import can_launch_client, is_linux
-from ..services.client_update import UpdateWorker, VerifyWorker
 from ..services.self_update import (
     fetch_updater_latest_tag,
     updater_update_available,
+)
+from ..services.update_backend.http_update import (
+    UpdateWorker,
+    VerifyWorker,
+    torrent_recovery_available,
 )
 from ..state.events import (
     EventDispatcher,
@@ -35,6 +39,7 @@ from ..state.events import (
     OperationFinished,
     ProgressChanged,
     StatusChanged,
+    UpdateFilesList,
 )
 from ..state.models import UpdateState
 
@@ -51,6 +56,27 @@ class Readiness:
     mode: str
     label: str
     status: str
+
+
+def _flatten_diff_tree(nodes, prefix=()) -> list[str]:
+    """Flatten a diff tree (as returned by __DIFF_TREE__) into a list of
+    relative file paths (e.g. "Data/foo.mpq", "WoW.exe").
+
+    Node ``name`` values are basenames, so the recursion carries the parent
+    directory chain to rebuild the full path (matching the relative paths the
+    HTTP downloader streams via ``current_file``)."""
+    paths: list[str] = []
+    for node in nodes:
+        t = node.get("type", "")
+        name = node.get("name", "")
+        cur = prefix + (name,)
+        if t == "file" or t == "del":
+            paths.append("/".join(cur))
+        elif t == "mpq":
+            paths.append("/".join(cur) + ".mpq")
+        elif t == "dir":
+            paths.extend(_flatten_diff_tree(node.get("files", []), cur))
+    return paths
 
 
 class UpdateController:
@@ -108,19 +134,20 @@ class UpdateController:
         # a stale worker can't keep writing to a queue we no longer poll.
         if self._verify_worker is not None:
             self._verify_worker.cancel()
+        # Clear torrent state from previous attempts
+        self.state.torrent_reachable = None
+        self.state.torrent_error = None
+        self.state.torrent_stale = None
         self.state.running = True
         self._op = "verify"
         self.state.status = "Verifying…"
         self.state.manifest_available = False  # a fresh verify re-fetches it
         self._log_q = queue.Queue()
         self._prog_q = queue.Queue()
-        cfg = load_config()
         worker = VerifyWorker(
             out,
             self._log_q,
             self._prog_q,
-            cfg.get("expected_patched_wow_hash", ""),
-            cfg.get("original_server_wow_hash", ""),
             overwrite_config=overwrite_config,
         )
         self._verify_worker = worker
@@ -129,8 +156,13 @@ class UpdateController:
         self._dispatcher.post(ProgressChanged(0.0, ""))
 
     def start_update(self):
-        if self.state.running or not self._client_updates_enabled():
-            return
+        if self.state.running:
+            self._dispatcher.post(
+                LogMessage("An update is already in progress.\n", "dim")
+            )
+            return False
+        if not self._client_updates_enabled():
+            return False
         out = (self._get_out_dir() or "").strip()
         if not out:
             self._dispatcher.post(
@@ -139,27 +171,47 @@ class UpdateController:
             return
         update_config(lambda c: c.__setitem__("out_dir", out))
         self._dispatcher.post(LogMessage(f"\nGame folder: {out}\n", "dim"))
+        torrent_wanted = (
+            set(self.state.torrent_stale)
+            if self.state.torrent_stale is not None
+            else None
+        )
+        if torrent_wanted == set():
+            self.state.torrent_stale = None
+            self.state.client_ready = True
+            self.state.status = "Up to date"
+            self._dispatcher.post(
+                LogMessage("[torrent] No stale files; update skipped.\n", "ok")
+            )
+            self._dispatcher.post(ProgressChanged(1.0, ""))
+            self._dispatcher.post(OperationFinished("update", True))
+            return True
+        # Clear torrent state from previous attempts
+        self.state.torrent_reachable = None
+        self.state.torrent_error = None
+        # Note: torrent_stale is cleared AFTER capturing it for the worker
         self.state.running = True
         self._op = "update"
         self.state.status = "Updating…"
         self._log_q = queue.Queue()
         self._prog_q = queue.Queue()
-        cfg = load_config()
         worker = UpdateWorker(
             out,
             self._log_q,
             self._prog_q,
-            cfg.get("expected_patched_wow_hash", ""),
-        )
-        worker.original_server_wow_hash = cfg.get(
-            "original_server_wow_hash", ""
         )
         self._worker = worker
         diff = self.state.diff_nodes
         self.state.diff_nodes = None
-        threading.Thread(target=worker.run, args=(diff,), daemon=True).start()
+        self.state.torrent_stale = None
+        threading.Thread(
+            target=worker.run,
+            args=(diff, torrent_wanted),
+            daemon=True,
+        ).start()
         self._dispatcher.post(StatusChanged("Updating…"))
         self._dispatcher.post(ProgressChanged(0.0, ""))
+        return True
 
     def cancel(self):
         """Ask every live worker to stop; the queues are drained as normal."""
@@ -170,9 +222,22 @@ class UpdateController:
     def invalidate(self):
         """Drop readiness and the cached diff tree (game folder changed or a
         verify-game-files recheck)."""
+        self.cancel()
+        # Workers may still enqueue one final marker after cooperative cancel;
+        # stop polling their queues before clearing the state they could alter.
+        self._log_q = queue.Queue()
+        self._prog_q = queue.Queue()
+        self._worker = None
+        self._verify_worker = None
+        self._op = None
+        self.state.running = False
         self.state.client_ready = False
         self.state.manifest_available = False
         self.state.diff_nodes = None
+        # Also clear torrent state
+        self.state.torrent_reachable = None
+        self.state.torrent_error = None
+        self.state.torrent_stale = None
 
     def read_client_version(self) -> str:
         """The client version straight from disk, cached on state (footer
@@ -381,10 +446,38 @@ class UpdateController:
         except queue.Empty:
             pass
         if latest is not None:
-            val, lbl = latest
+            val, lbl = latest[:2]
+            details = latest[2] if len(latest) > 2 else {}
             self.state.progress = max(0.0, min(1.0, val))
             self.state.progress_label = lbl
-            self._dispatcher.post(ProgressChanged(val, lbl))
+            phase = details.get("phase", "")
+            transport = details.get("transport", "")
+            self.state.progress_phase = phase
+            self.state.progress_transport = transport
+            self.state.progress_file = details.get("current_file", "")
+            self.state.progress_downloaded = details.get("downloaded", 0)
+            self.state.progress_total = details.get("total", 0)
+            self.state.progress_speed = details.get("speed", 0.0)
+            self.state.progress_peers = details.get("peers", 0)
+            self.state.progress_verified_pieces = details.get(
+                "verified_pieces", 0
+            )
+            self.state.progress_total_pieces = details.get("total_pieces", 0)
+            self._dispatcher.post(
+                ProgressChanged(
+                    val,
+                    lbl,
+                    phase=phase,
+                    transport=transport,
+                    current_file=self.state.progress_file,
+                    downloaded=self.state.progress_downloaded,
+                    total=self.state.progress_total,
+                    speed=self.state.progress_speed,
+                    peers=self.state.progress_peers,
+                    verified_pieces=self.state.progress_verified_pieces,
+                    total_pieces=self.state.progress_total_pieces,
+                )
+            )
 
     def compute_readiness(self, addons_installing: bool = False) -> Readiness:
         """Footer button/status decision for the current state.
@@ -411,12 +504,51 @@ class UpdateController:
                 return Readiness("busy", "READY", "Client updates disabled")
             return Readiness("play", "PLAY", "Client updates disabled")
         if not self.state.manifest_available:
-            # No manifest → can't verify updates, but the game folder may
-            # still be ready to play. Offer PLAY when launch is possible;
-            # gray UPDATE otherwise so we never start a blind update.
+            # No manifest → can't verify via SHA-1, but a torrent-only verify
+            # may have established readiness or a stale-file list.
+            if self.state.torrent_stale:
+                n = len(self.state.torrent_stale)
+                error_suffix = ""
+                if self.state.torrent_error:
+                    error_suffix = f" ({self.state.torrent_error})"
+                return Readiness(
+                    "update",
+                    "UPDATE",
+                    f"{n} file(s) to update via BitTorrent{error_suffix}",
+                )
+            if self.state.torrent_reachable is False:
+                # Neither the manifest nor the BitTorrent snapshot is
+                # reachable — there is no update to offer. Play if we can,
+                # otherwise gray the button.
+                error_detail = (
+                    f": {self.state.torrent_error}"
+                    if self.state.torrent_error
+                    else ""
+                )
+                if not can_launch_client():
+                    return Readiness(
+                        "disabled",
+                        "UPDATE",
+                        f"Torrent unavailable{error_detail}",
+                    )
+                return Readiness(
+                    "play", "PLAY", f"Torrent unavailable{error_detail}"
+                )
+            if self.state.torrent_error and not self.state.torrent_stale:
+                # Torrent reachable but had an error (stalled, session, disk,
+                # verify failed). Offer recovery so the user can retry.
+                return Readiness(
+                    "update",
+                    "UPDATE",
+                    f"Download via BitTorrent ({self.state.torrent_error})",
+                )
+            if not self.state.client_ready and torrent_recovery_available():
+                return Readiness("update", "UPDATE", "Download via BitTorrent")
             if not can_launch_client():
                 return Readiness("disabled", "UPDATE", "Manifest unavailable")
-            return Readiness("play", "PLAY", "Manifest unavailable")
+            if not self.state.client_ready:
+                return Readiness("play", "PLAY", "Manifest unavailable")
+            return Readiness("play", "PLAY", "Everything up to date!")
         if not self.state.client_ready:
             return Readiness("update", "UPDATE", "Update available!")
         if self._mods_have_errors():
@@ -439,11 +571,12 @@ class UpdateController:
             self._dispatcher.post(ProgressChanged(1.0, ""))
             self._dispatcher.post(OperationFinished("update", True))
         elif msg == "__ERROR__":
+            op = self._op or "update"
             self.state.running = False
             self.state.client_ready = False
             self._op = None
             self._dispatcher.post(ProgressChanged(0.0, ""))
-            self._dispatcher.post(OperationFailed("update", ""))
+            self._dispatcher.post(OperationFailed(op, ""))
         elif msg == "__MANIFEST_AVAILABLE__":
             # A valid manifest was fetched and parsed — the update button may
             # offer its real verdict again.
@@ -473,16 +606,122 @@ class UpdateController:
             self._dispatcher.post(OperationFinished("verify", False))
         elif msg == "__DIFF_TREE__":
             self.state.diff_nodes = tag
-        elif msg.startswith("__ORIGINAL_HASH__"):
-            h = msg[len("__ORIGINAL_HASH__") :]
-            update_config(
-                lambda c: c.__setitem__("original_server_wow_hash", h)
+            if tag:
+                self._dispatcher.post(UpdateFilesList(_flatten_diff_tree(tag)))
+        elif msg == "__TORRENT_REACHABLE__":
+            self.state.torrent_reachable = True
+        elif msg == "__TORRENT_UNREACHABLE__":
+            # No manifest and the BitTorrent snapshot can't be fetched — don't
+            # offer a dead recovery download; the UI falls back to PLAY (or a
+            # disabled UPDATE) instead.
+            self.state.running = False
+            self.state.client_ready = False
+            self.state.manifest_available = False
+            self.state.torrent_reachable = False
+            self.state.torrent_error = tag or None
+            self.state.torrent_stale = None
+            op = self._op or "verify"
+            self._op = None
+            self._dispatcher.post(ProgressChanged(0.0, ""))
+            self._dispatcher.post(OperationFinished(op, False))
+        elif msg == "__TORRENT_CORRUPT__":
+            # Torrent file downloaded but malformed — cannot use for recovery.
+            self.state.running = False
+            self.state.client_ready = False
+            self.state.manifest_available = False
+            self.state.torrent_reachable = False
+            self.state.torrent_error = tag or None
+            self.state.torrent_stale = None
+            op = self._op or "verify"
+            self._op = None
+            self._dispatcher.post(ProgressChanged(0.0, ""))
+            self._dispatcher.post(OperationFinished(op, False))
+        elif msg == "__TORRENT_STALLED__":
+            # Verification stalled (low/no peers) — torrent reachable, offer
+            # recovery download on next launch.
+            self.state.running = False
+            self.state.client_ready = False
+            self.state.manifest_available = False
+            self.state.torrent_reachable = True
+            self.state.torrent_error = tag or None
+            self.state.torrent_stale = None
+            op = self._op or "verify"
+            self._op = None
+            self._dispatcher.post(ProgressChanged(0.0, ""))
+            self._dispatcher.post(OperationFinished(op, False))
+        elif msg == "__TORRENT_SESSION_ERROR__":
+            # Session creation failed — torrent reachable, offer retry.
+            self.state.running = False
+            self.state.client_ready = False
+            self.state.manifest_available = False
+            self.state.torrent_reachable = True
+            self.state.torrent_error = tag or None
+            self.state.torrent_stale = None
+            op = self._op or "verify"
+            self._op = None
+            self._dispatcher.post(ProgressChanged(0.0, ""))
+            self._dispatcher.post(OperationFinished(op, False))
+        elif msg == "__TORRENT_DISK_ERROR__":
+            # Disk full / permission denied — torrent reachable, show error.
+            self.state.running = False
+            self.state.client_ready = False
+            self.state.manifest_available = False
+            self.state.torrent_reachable = True
+            self.state.torrent_error = tag or None
+            self.state.torrent_stale = None
+            op = self._op or "verify"
+            self._op = None
+            self._dispatcher.post(ProgressChanged(0.0, ""))
+            self._dispatcher.post(OperationFinished(op, False))
+        elif msg == "__TORRENT_VERIFY_FAILED__":
+            # The snapshot was fetched but libtorrent recheck failed — the
+            # torrent IS reachable, so offer recovery download.
+            self.state.running = False
+            self.state.client_ready = False
+            self.state.manifest_available = False
+            self.state.torrent_reachable = True
+            self.state.torrent_error = tag or None
+            self.state.torrent_stale = None
+            op = self._op or "verify"
+            self._op = None
+            self._dispatcher.post(ProgressChanged(0.0, ""))
+            self._dispatcher.post(OperationFinished(op, False))
+        elif msg == "__TORRENT_DIFF__":
+            # A manifest-less verify against the BitTorrent snapshot found
+            # stale files: remember which ones so the update only fetches
+            # them. The manifest stays unavailable so a later verify still
+            # re-checks, but the client is not ready yet.
+            self.state.running = False
+            self.state.client_ready = False
+            self.state.manifest_available = False
+            self.state.torrent_stale = list(tag) if tag else []
+            self._op = None
+            self._dispatcher.post(ProgressChanged(0.0, ""))
+            self._dispatcher.post(
+                UpdateFilesList(sorted(self.state.torrent_stale))
             )
-        elif msg.startswith("__PATCHED_HASH__"):
-            h = msg[len("__PATCHED_HASH__") :]
-            update_config(
-                lambda c: c.__setitem__("expected_patched_wow_hash", h)
-            )
+            self._dispatcher.post(OperationFinished("verify", False))
+        elif msg == "__TORRENT_UP_TO_DATE__":
+            # The client already matches the BitTorrent snapshot even though
+            # no manifest was ever fetched.
+            self.state.running = False
+            self.state.client_ready = True
+            self.state.manifest_available = False
+            self.state.torrent_stale = None
+            self._op = None
+            self._dispatcher.post(ProgressChanged(1.0, ""))
+            self._dispatcher.post(OperationFinished("verify", True))
+        elif msg == "__TORRENT_RECOVERY_DONE__":
+            # A manifest-less BitTorrent recovery install finished: the client
+            # files are present and piece-hash verified, but no manifest was
+            # ever fetched — keep manifest_available False so the next verify
+            # still re-checks everything.
+            self.state.running = False
+            self.state.client_ready = True
+            self.state.manifest_available = False
+            self._op = None
+            self._dispatcher.post(ProgressChanged(1.0, ""))
+            self._dispatcher.post(OperationFinished("update", True))
         elif msg.startswith("__VERSION__"):
             self.state.client_version = msg[len("__VERSION__") :]
         else:

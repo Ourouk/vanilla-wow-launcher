@@ -49,6 +49,7 @@ from ...state.events import (
     OperationFinished,
     ProgressChanged,
     StatusChanged,
+    UpdateFilesList,
 )
 
 # Poll interval: responsive without busy-spinning the event loop.
@@ -66,6 +67,8 @@ class ControllerBridge(QObject):
     statusChanged = Signal(str)
     logMessage = Signal(str, str)
     progressChanged = Signal(float, str)
+    updateProgressChanged = Signal(object)
+    updateFilesList = Signal(object)
     newsLoaded = Signal(object)
     modsLoaded = Signal(object)
     addonsLoaded = Signal(object)
@@ -98,6 +101,9 @@ class ControllerBridge(QObject):
             self.logMessage.emit(event.text, event.tag)
         elif isinstance(event, ProgressChanged):
             self.progressChanged.emit(event.value, event.label)
+            self.updateProgressChanged.emit(event)
+        elif isinstance(event, UpdateFilesList):
+            self.updateFilesList.emit(event)
         elif isinstance(event, NewsLoaded):
             self.newsLoaded.emit(event)
         elif isinstance(event, ModsLoaded):

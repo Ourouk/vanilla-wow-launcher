@@ -1,17 +1,21 @@
 # Vanilla WoW Launcher
 
-Vanilla WoW Launcher is a config-driven desktop companion for Vanilla WoW
-clients. It incrementally updates game files, installs registered mods and
-Git-hosted addons, applies `Config.wtf` and client tweaks, and shows server
-news — all sourced from whichever server you point it at, with no built-in
-server list.
+Vanilla WoW Launcher is a desktop companion for Vanilla WoW clients. It updates
+your game files, installs mods and addons, applies common graphics, camera,
+sound, and gameplay preferences, and shows your server's news — all pointed at
+whichever server you choose, with no built-in server list.
 
 ![Vanilla WoW Launcher](screenshot.png)
 
+> For developers and server operators, see the
+> [developer guide](docs/DEVELOPER.md).
+
 ## What It Does
 
-- Updates the game client and downloads only changed files.
-- Verifies downloaded files and retries interrupted downloads.
+- Updates the game client, downloading only the files that changed.
+- Verifies downloaded files and resumes interrupted downloads.
+- Bulk-downloads changed files over BitTorrent when your server offers it,
+  falling back to plain HTTP automatically.
 - Installs and updates registered client mods.
 - Installs addons from supported Git hosting services without requiring Git.
 - Applies common graphics, camera, sound, and gameplay preferences.
@@ -61,10 +65,9 @@ release checksum.
 3. Run the AppImage and select your game folder.
 
 The AppImage includes the launcher's Qt libraries. Your desktop environment
-must still provide a working graphical session. Patching the Windows `WoW.exe`
-binary is not available on Linux, and game launching requires
+must still provide a working graphical session, and game launching requires
 [umu-launcher](https://github.com/Open-Wine-Components/umu-launcher)
-(see [Linux](#linux-1)).
+(see [Linux](#linux)).
 
 ### macOS
 
@@ -74,8 +77,7 @@ binary is not available on Linux, and game launching requires
 
 The macOS package supports both Apple Silicon and Intel Macs. It is unsigned
 by default, so macOS may require confirmation in Privacy & Security before the
-first launch. Game launching and patching the Windows `WoW.exe` binary are not
-available on macOS.
+first launch. Game launching is not available on macOS.
 
 ## First Launch
 
@@ -98,17 +100,26 @@ After selecting a configuration:
 
 1. Open **Settings** and select the game folder if it was not detected.
 2. Review the configured server and mirror information.
-3. Click **UPDATE** to run the complete update sequence: client, mods, then
+3. On first run, choose whether to install the server's essential mods and
+   recommended addons when prompted.
+4. Click **UPDATE** to run the complete update sequence: client, mods, then
    addons.
-4. Use **PLAY** when the client is ready on supported platforms.
+5. Use **PLAY** when the client is ready on supported platforms.
 
 ## Using the Launcher
 
 ### Client Updates
 
 The launcher compares the files in your game folder with the configured server
-manifest. Only missing or changed files are downloaded. Downloads can resume
+manifest and downloads only the missing or changed files. Downloads can resume
 after an interruption, and files are checked again after downloading.
+
+When your server advertises a torrent, changed files are downloaded over
+BitTorrent first and anything it missed is finished over HTTP automatically —
+you just click **UPDATE**. If the manifest can't be reached but a torrent is
+available, **UPDATE** offers a recovery re-download of the whole client. All of
+this happens transparently; see the
+[developer guide](docs/DEVELOPER.md#client-update-pipeline) for the details.
 
 The **UPDATE** button runs updates in this order:
 
@@ -118,9 +129,9 @@ The **UPDATE** button runs updates in this order:
 
 The next step starts only after the previous step completes successfully. If a
 server does not provide a client manifest or client downloads, open **Settings**
-and clear **Enable client updates**. This stores `"client_update_enabled":
-false` in the launcher's settings, skips the client step, and lets **UPDATE**
-run the mods and addons steps. Client updates are enabled by default.
+and clear **Enable client updates**. This skips the client step and lets
+**UPDATE** run the mods and addons steps. Client updates are enabled by
+default.
 
 Do not edit or remove files while an update or verification is running.
 
@@ -152,28 +163,23 @@ The **TWEAKS** tab provides common settings such as:
 - Nameplate range
 - Camera distance
 - Ground clutter distance
-- Auto-loot
 - Background sounds
 
 Invalid values are rejected or limited to safe ranges. Use **Apply** to save
-changes and **Reset** to restore the available defaults.
-
-Some Windows-only changes require access to the client executable and are
-disabled automatically on other platforms.
+changes and **Reset** to restore the available defaults. Tweaks are written to
+`Config.wtf`; runtime client fixes are left to the VanillaFixes loader mod
+where installed, and the launcher never modifies `WoW.exe`.
 
 ### News
 
 The **NEWS** tab displays announcements and featured posts from the configured
-server. News is retrieved from the URLs in the selected launcher
-configuration.
+server.
 
 ### Discord
 
-When the selected launcher configuration includes an optional top-level
-`discord_url`, the header shows a **DISCORD** button. Clicking it opens the
-configured server invitation or community page in your web browser. The button
-is hidden when `discord_url` is omitted, set to `null`, or set to an empty
-string.
+When your launcher configuration includes a Discord link, the header shows a
+**DISCORD** button that opens your server's invitation or community page in
+your web browser. The button is hidden when no link is configured.
 
 ### Settings
 
@@ -208,9 +214,9 @@ setup is required. To use it:
    binary override, and the GAMEID token.
 
 The launcher defaults to `GE-Proton` (umu resolves the newest installed
-matching build) and a single launcher-wide WINEPREFIX under the user data dir
-(`$XDG_DATA_HOME/vanilla-wow-launcher/wineprefix`). The PLAY button only
-appears when `umu-run` is detected; otherwise the log suggests installing it.
+matching build) and uses a single launcher-wide Wine prefix. The **PLAY**
+button only appears when `umu-run` is detected; otherwise the log suggests
+installing it.
 
 ## Supported Platforms
 
@@ -221,25 +227,33 @@ appears when `umu-run` is detected; otherwise the log suggests installing it.
 | News and configuration | Yes | Yes | Yes |
 | `Config.wtf` tweaks | Yes | Yes | Yes |
 | Launch the Windows game client | Yes | Yes (via umu-launcher) | No |
-| Patch the Windows `WoW.exe` binary | Yes | No | No |
 | Windows Defender exclusions | Yes | No | No |
+
+## Data Files
+
+The launcher stores settings, installation records, and caches in your user
+profile (Windows `%APPDATA%`, Linux `~/.vanilla-wow-launcher`, macOS
+`~/Library/Application Support`). Deleting the settings directory resets the
+launcher and starts first-time setup again. Delete these files only when the
+launcher is closed and keep a backup if you need to preserve custom settings
+or catalog entries.
 
 ## Security and Privacy
 
-- Downloads use HTTPS and host restrictions derived from the selected
-  configuration.
+- Downloads use HTTPS with host restrictions derived from your configuration.
 - Redirects remain HTTPS-only.
 - Downloaded archives are extracted with protection against path traversal.
 - Settings are stored in per-user directories rather than beside the
   executable.
-- Configuration changes are written safely to reduce corruption after an
-  interruption.
 
 The launcher retrieves content from the URLs and registries configured by you
 or by the distribution that supplied the configuration. Review those URLs
 before using the launcher. Do not provide credentials, private repositories, or
 other sensitive information in a configuration file unless you understand how
 the configured service handles it.
+
+See the [developer guide](docs/DEVELOPER.md#security-model) for the full
+security model.
 
 ## Troubleshooting
 
@@ -279,21 +293,6 @@ the first blocked launch.
 Make sure the AppImage is executable and that you are running it from an
 active X11 or Wayland desktop session. The AppImage cannot provide a display
 server.
-
-## Configuration and Cache Files
-
-The launcher stores settings, installation records, and caches in your user
-profile:
-
-| Platform | Settings | Cache |
-| --- | --- | --- |
-| Windows | `%APPDATA%\VanillaWoWLauncher` | `%LOCALAPPDATA%\VanillaWoWLauncher` |
-| Linux | `~/.vanilla-wow-launcher` | `$XDG_CACHE_HOME/vanilla-wow-launcher` or `~/.cache/vanilla-wow-launcher` |
-| macOS | `~/Library/Application Support/VanillaWoWLauncher` | `~/Library/Caches/VanillaWoWLauncher` |
-
-Deleting the settings directory resets the launcher and starts first-time
-setup again. Delete these files only when the launcher is closed and keep a
-backup if you need to preserve custom settings or catalog entries.
 
 ## Legal Notices
 

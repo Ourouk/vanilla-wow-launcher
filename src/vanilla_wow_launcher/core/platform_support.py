@@ -2,10 +2,9 @@
 
 Vanilla WoW Launcher's core update/mod/addon/news features are generic, but a few
 actions are platform-specific: launching the Windows game client (native on
-Windows, via umu-launcher/Proton on Linux when ``umu-run`` is available),
-binary-patching WoW.exe and Windows Defender exclusions (Windows-only). On
-unsupported platforms those are disabled and the app falls back to the generic
-features only.
+Windows, via umu-launcher/Proton on Linux when ``umu-run`` is available) and
+Windows Defender exclusions (Windows-only). On unsupported platforms those are
+disabled and the app falls back to the generic features only.
 
 Detection is done through functions (not module constants) so tests can
 monkeypatch `sys.platform`.
@@ -40,11 +39,6 @@ def can_launch_client() -> bool:
 
         return umu.umu_available()
     return False
-
-
-def can_patch_client() -> bool:
-    """Binary patching of WoW.exe targets Windows offsets only."""
-    return is_windows()
 
 
 def can_manage_antivirus() -> bool:

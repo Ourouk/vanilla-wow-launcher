@@ -117,7 +117,7 @@ def _panel(window) -> AddonsPanel:
 
 
 def test_panel_replaces_the_addons_placeholder(qapp, window):
-    assert window._pages == {"NEWS": 0, "TWEAKS": 1, "ADDONS": 2, "MODS": 3}
+    assert window._pages["UPDATE"] == MainWindow.TABS.index("UPDATE")
     panel = _panel(window)
     assert panel.objectName() == "addonsPanel"
     assert panel.scroll.objectName() == "addonsScroll"

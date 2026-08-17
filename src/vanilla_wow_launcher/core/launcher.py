@@ -19,6 +19,7 @@ other URL is derived from it unless overridden:
         "realm": "server.example",
         "manifest_url": "https://server.example/api/file/latest/manifest.json",
         "client_url": "https://server.example/client/latest",
+        "torrent_url": "https://server.example/client/latest/client.torrent",
         "news_url": "https://server.example/news",
         "featured_news_url": "https://server.example/news/featured",
         "mods_registry_url": "https://server.example/api/mods.json",
@@ -38,7 +39,8 @@ other URL is derived from it unless overridden:
           "name": "Backup",
           "base_url": "https://mirror.example",
           "manifest_url": "https://mirror.example/api/file/latest/manifest.json",
-          "client_url": "https://dl.mirror.example/client/latest"
+          "client_url": "https://dl.mirror.example/client/latest",
+          "torrent_url": "https://dl.mirror.example/client/latest/client.torrent"
         }
       ]
     }
@@ -46,6 +48,12 @@ other URL is derived from it unless overridden:
 The manifest and client files are fetched from the configured endpoints; a
 mirror's ``client_url`` may point at a separate CDN host, and mirrors are
 optional (the server is the fallback).
+
+The optional ``torrent_url`` (on the server or a mirror) advertises a
+BitTorrent snapshot of the client files for the update backend: the launcher
+fetches the ``.torrent`` over HTTPS and bulk-downloads the stale files via
+libtorrent when it is available, falling back to per-file HTTP downloads
+otherwise. A mirror's ``torrent_url`` takes precedence over the server's.
 
 The optional ``theme`` object overrides the app's color theme per server:
 color slots named like ``C_GOLD`` (each a ``#rrggbb`` hex value) plus an
@@ -85,6 +93,7 @@ class Mirror:
     base_url: str
     manifest_url: str
     client_url: str
+    torrent_url: str | None = None
 
 
 @dataclass
@@ -104,6 +113,7 @@ class LauncherConfig:
     mirrors: list["Mirror"] = field(default_factory=list)
     discord_url: str | None = None
     theme: dict | None = None
+    torrent_url: str | None = None
 
     @property
     def configured(self) -> bool:
@@ -120,6 +130,13 @@ class LauncherConfig:
                 hosts.add(host)
         return hosts
 
+    def has_torrent(self) -> bool:
+        """Whether any configured source (server or mirror) advertises a
+        ``torrent_url``. Static — no network probing."""
+        if self.torrent_url:
+            return True
+        return any(m.torrent_url for m in self.mirrors)
+
     def all_bases(self) -> list[str]:
         """The server followed by every mirror's base URL."""
         return [self.server_url] + [m.base_url for m in self.mirrors]
@@ -129,8 +146,12 @@ class LauncherConfig:
         resolved manifest/client endpoints of the server and mirrors."""
         urls: list[str] = list(self.all_bases())
         urls += [self.manifest_url, self.client_url]
+        if self.torrent_url:
+            urls.append(self.torrent_url)
         for m in self.mirrors:
             urls += [m.manifest_url, m.client_url]
+            if m.torrent_url:
+                urls.append(m.torrent_url)
         return urls
 
 
@@ -205,6 +226,7 @@ def _derive(data: dict) -> LauncherConfig:
                 or _default_manifest(mb),
                 client_url=_https_url(m.get("client_url"))
                 or _default_client(mb),
+                torrent_url=_https_url(m.get("torrent_url")),
             )
         )
 
@@ -245,6 +267,7 @@ def _derive(data: dict) -> LauncherConfig:
         mirrors=mirrors,
         discord_url=discord_url,
         theme=theme,
+        torrent_url=_https_url(server.get("torrent_url")),
     )
 
 

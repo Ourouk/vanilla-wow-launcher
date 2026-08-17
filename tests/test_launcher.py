@@ -156,6 +156,40 @@ def test_endpoint_overrides_and_realm():
     assert cfg.realm == "realms.example"
 
 
+def test_has_torrent_any_source():
+    assert (
+        _config(
+            {
+                "server": {
+                    "base_url": "https://srv.example",
+                    "torrent_url": "https://srv.example/client.torrent",
+                }
+            }
+        ).has_torrent()
+        is True
+    )
+    # Mirror-only torrent still counts (server fallback when a mirror wins).
+    assert (
+        _config(
+            {
+                "server": {"base_url": "https://srv.example"},
+                "mirrors": [
+                    {
+                        "name": "M",
+                        "base_url": "https://m1.example",
+                        "torrent_url": "https://m1.example/client.torrent",
+                    }
+                ],
+            }
+        ).has_torrent()
+        is True
+    )
+    assert (
+        _config({"server": {"base_url": "https://srv.example"}}).has_torrent()
+        is False
+    )
+
+
 def test_missing_base_url_is_error():
     assert _config({"server": {"realm": "x"}}) is None
     assert "base_url" in launcher.config_error()

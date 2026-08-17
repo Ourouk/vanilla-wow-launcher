@@ -1,6 +1,4 @@
-"""Unit tests for the tweaks module (patch builder, Config.wtf)."""
-
-import struct
+"""Unit tests for the tweaks module (Config.wtf)."""
 
 import vanilla_wow_launcher.core.config_store as config_store
 import vanilla_wow_launcher.services.tweaks as tweaks
@@ -39,65 +37,6 @@ def test_save_tweaks_config(tmp_path):
     )
     tweaks.save_tweaks_config({"farClip": 42})
     assert config_store.load_config()["tweaks"] == {"farClip": 42}
-
-
-def _fake_buffer():
-    buf = bytearray(0x1000)
-    struct.pack_into("<H", buf, 0x126, 0x0000)
-    return buf
-
-
-def test_build_tweaks_contains_expected_entries():
-    ops = tweaks.build_tweaks(_fake_buffer(), tweaks.TWEAKS_DEFAULTS)
-    labels = [o[0] for o in ops]
-    assert "largeAddress" in labels
-    assert "fieldOfView" in labels
-    assert "soundInBackground" in labels
-    assert "alwaysAutoLoot" in labels
-    for _label, kind, offset, _value in ops:
-        assert kind in ("float", "int8", "uint16", "bytes")
-        if kind == "float":
-            assert offset is not None
-
-
-def test_build_tweaks_sound_bg_on_off():
-    on = dict(tweaks.TWEAKS_DEFAULTS, soundInBackground=True)
-    off = dict(tweaks.TWEAKS_DEFAULTS, soundInBackground=False)
-    ops_on = {o[0]: o for o in tweaks.build_tweaks(_fake_buffer(), on)}
-    ops_off = {o[0]: o for o in tweaks.build_tweaks(_fake_buffer(), off)}
-    assert ops_on["soundInBackground"][3] == 0x27
-    assert ops_off["soundInBackground"][3] == 0x14
-
-
-def test_build_tweaks_always_loot_flips_bytes():
-    on = dict(tweaks.TWEAKS_DEFAULTS, alwaysAutoLoot=True)
-    off = dict(tweaks.TWEAKS_DEFAULTS, alwaysAutoLoot=False)
-    ops_on = {o[0]: o for o in tweaks.build_tweaks(_fake_buffer(), on)}
-    ops_off = {o[0]: o for o in tweaks.build_tweaks(_fake_buffer(), off)}
-    on_bytes = b"".join(b for _off, b in ops_on["alwaysAutoLoot"][3])
-    off_bytes = b"".join(b for _off, b in ops_off["alwaysAutoLoot"][3])
-    assert on_bytes == b"\x75\x75"
-    assert off_bytes == b"\x74\x74"
-
-
-def test_build_tweaks_defaults_when_none(tmp_path):
-    config_store.configure(
-        str(tmp_path / "config.json"), str(tmp_path / "cache.json")
-    )
-    ops = tweaks.build_tweaks(_fake_buffer(), None)
-    assert {o[0] for o in ops} == {
-        "largeAddress",
-        "fieldOfView",
-        "cameraDistance",
-        "farClip",
-        "frillDistance",
-        "nameplateRange",
-        "soundInBackground",
-        "alwaysAutoLoot",
-        "crossFactionResurrect",
-        "cameraSkipFix",
-        "skillUiGateHijack",
-    }
 
 
 def test_write_config_wtf_writes_file(tmp_path):

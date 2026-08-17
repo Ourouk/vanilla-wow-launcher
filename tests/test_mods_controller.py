@@ -12,11 +12,10 @@ import time
 import pytest
 
 import vanilla_wow_launcher.controllers.mods as mc
-import vanilla_wow_launcher.services.client_update as client_update
+import vanilla_wow_launcher.services.update_backend.http_update as client_update
 from vanilla_wow_launcher.controllers.mods import ModsController
 from vanilla_wow_launcher.state.events import (
     EventDispatcher,
-    LogMessage,
     ModsLoaded,
     OperationFinished,
     StatusChanged,
@@ -484,80 +483,19 @@ def test_apply_ignores_concurrent_apply(
     assert controller.busy is False
 
 
-# ── maybe_install_essential_mods ───────────────────────────────────────
-
-
-@pytest.fixture
-def fresh_folder(controller, cfg, tmp_path):
-    out = str(tmp_path)
-    (tmp_path / "WoW.exe").write_bytes(b"MZ")
-    cfg["out_dir"] = out
-    cfg.pop("mods", None)
-    return out
-
-
-def test_maybe_install_essential_mods_queues_essential_and_starts(
-    controller, cfg, fresh_folder, monkeypatch
-):
-    calls = []
-    monkeypatch.setattr(controller, "apply", lambda *a, **k: calls.append(a))
-
-    assert controller.maybe_install_essential_mods() is True
-    assert calls == [()]
-    assert controller.state.pending["AlphaMod"].enabled is True
-    assert "BetaMod" not in controller.state.pending
-    assert any(
-        isinstance(e, LogMessage) for e in controller._dispatcher.drain()
-    )
-
-
-def test_maybe_install_essential_mods_is_one_shot(
-    controller, cfg, fresh_folder, monkeypatch
-):
-    calls = []
-    monkeypatch.setattr(controller, "apply", lambda *a, **k: calls.append(a))
-
-    assert controller.maybe_install_essential_mods() is True
-    assert controller.maybe_install_essential_mods() is False
-    assert calls == [()]
-
-
-def test_maybe_install_essential_mods_skips_when_initialized(
-    controller, cfg, fresh_folder, monkeypatch
-):
-    cfg["mods"] = {"AlphaMod": {"enabled": True}}
-    assert controller.maybe_install_essential_mods() is False
-
-
-def test_maybe_install_essential_mods_skips_without_client(
-    controller, cfg, tmp_path
-):
-    cfg["out_dir"] = str(tmp_path)
-    cfg.pop("mods", None)
-    assert controller.maybe_install_essential_mods() is False
-
-
 # ── reset / invalidate ─────────────────────────────────────────────────
 
 
-def test_reset_clears_state_and_rearms_one_shot(
-    controller, cfg, fresh_folder, monkeypatch
-):
-    calls = []
-    monkeypatch.setattr(controller, "apply", lambda *a, **k: calls.append(a))
+def test_reset_clears_state(controller, cfg):
     controller.toggle("AlphaMod", True)
     controller.state.latest_versions["AlphaMod"] = "2.0"
     controller.state.updates_count = 3
-    assert controller.maybe_install_essential_mods() is True
 
     controller.reset()
 
     assert controller.state.pending == {}
     assert controller.state.latest_versions == {}
     assert controller.state.updates_count == 0
-    # The one-shot auto-install is re-armed for the new folder.
-    assert controller.maybe_install_essential_mods() is True
-    assert len(calls) == 2
 
 
 def test_invalidate_drops_latest_versions(controller, versions):

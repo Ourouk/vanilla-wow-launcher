@@ -54,8 +54,10 @@ def window(qapp):
 
 def test_construction_sets_title_and_default_tab(qapp, window):
     assert window.windowTitle() == "Vanilla WoW Launcher"
-    assert window._stack.count() == 4
-    assert window._pages == {"NEWS": 0, "TWEAKS": 1, "ADDONS": 2, "MODS": 3}
+    assert window._stack.count() == 5
+    assert window._pages == {
+        name: idx for idx, name in enumerate(MainWindow.TABS)
+    }
     assert window._stack.currentIndex() == 0
     assert window._navButtons["NEWS"].isChecked()
     assert window._discordButton is None
@@ -96,6 +98,41 @@ def test_switch_tab_unknown_name_is_noop(qapp, window):
     before = window._stack.currentIndex()
     window.switch_tab("UNKNOWN")
     assert window._stack.currentIndex() == before
+
+
+def test_update_progress_renders_in_update_panel(qapp, window):
+    hub = window._hub
+    hub.dispatcher.post(
+        ProgressChanged(
+            0.5,
+            "patch.mpq",
+            phase="Downloading",
+            transport="BitTorrent",
+            current_file="patch.mpq",
+            downloaded=512 * 1024,
+            total=1024 * 1024,
+            speed=2 * 1024 * 1024,
+            peers=4,
+        )
+    )
+    QTest.qWait(200)
+
+    panel = window._stack.widget(window._pages["UPDATE"])
+    assert panel._phase.text() == "Downloading"
+    assert panel._transport.text() == "BitTorrent"
+    assert panel._file.text() == "patch.mpq"
+    assert panel._progress.value() == 50
+    assert panel._peers.text() == "4"
+
+
+def test_empty_footer_progress_does_not_reset_update_phase(qapp, window):
+    hub = window._hub
+    hub.dispatcher.post(StatusChanged("Updating…"))
+    hub.dispatcher.post(ProgressChanged(0.0, ""))
+    QTest.qWait(200)
+
+    panel = window._stack.widget(window._pages["UPDATE"])
+    assert panel._phase.text() == "Updating…"
 
 
 def test_status_and_progress_events_reach_footer(qapp, window):

@@ -64,6 +64,7 @@ class _FakeAddons:
         self.applied_recs = []
         self.invalidated = 0
         self.verify_calls = 0
+        self.recommended_recs = 0
         self.state = _FakeAddonsState()
 
     def reset(self):
@@ -72,6 +73,10 @@ class _FakeAddons:
     def apply(self, recs):
         self.applied += 1
         self.applied_recs.append(recs)
+
+    def apply_recommended_addons(self):
+        self.recommended_recs += 1
+        return True
 
     def invalidate(self):
         self.invalidated += 1
@@ -176,6 +181,7 @@ def test_first_run_flags_initialized(cfg, monkeypatch):
     assert c.state.first_run is True
     assert c.state.first_run_verify_pending is True
     assert c.state.first_run_av_pending is False  # can_manage_antivirus → off
+    assert c.state.first_run_auto_install_pending is True
 
 
 def test_client_updates_default_to_enabled(cfg, fakes):
@@ -309,8 +315,6 @@ def test_set_path_resets_for_new_folder(
     (game / "WoW.exe").write_bytes(b"MZ")
     cfg["mods"] = {"VanillaFixes": {"enabled": True}}
     cfg["addons"] = {"pfUI": {"git": "x"}}
-    cfg["expected_patched_wow_hash"] = "abc"
-    cfg["original_server_wow_hash"] = "def"
     wdb_calls = []
     monkeypatch.setattr(
         sc.filesystem, "remove_wdb", lambda d: wdb_calls.append(d)
@@ -323,8 +327,6 @@ def test_set_path_resets_for_new_folder(
     assert cfg["out_dir"] == str(game)
     assert "mods" not in cfg
     assert "addons" not in cfg
-    assert "expected_patched_wow_hash" not in cfg
-    assert "original_server_wow_hash" not in cfg
     assert controller.state.path == str(game)
     assert controller.state.config == cfg
     assert fakes.updater.invalidate_calls == 1
@@ -465,31 +467,21 @@ def test_allow_through_antivirus_cancelled(controller, monkeypatch):
 def test_toggles_persist_config_keys(controller, cfg):
     controller.set_clear_wdb(True)
     controller.set_close_on_launch(False)
-    controller.set_auto_mods(False)
-    controller.set_auto_addons(True)
     assert cfg["clear_wdb_on_launch"] is True
     assert cfg["close_on_launch"] is False
-    assert cfg["auto_install_mods"] is False
-    assert cfg["auto_install_addons"] is True
 
 
 # ── verify_files ───────────────────────────────────────────────────────────
 
 
-def test_verify_files_delegates_and_drops_hashes(
-    controller, cfg, fakes, monkeypatch, tmp_path
-):
+def test_verify_files_delegates(controller, cfg, fakes, monkeypatch, tmp_path):
     cache = tmp_path / "hash.json"
     cache.write_text("{}")
     monkeypatch.setattr(sc, "CACHE_FILE", str(cache))
-    cfg["expected_patched_wow_hash"] = "abc"
-    cfg["original_server_wow_hash"] = "def"
     controller.verify_files()
     assert not cache.exists()
     assert fakes.updater.invalidate_calls == 1
     assert fakes.updater.verify_calls == [False]
-    assert "expected_patched_wow_hash" not in cfg
-    assert "original_server_wow_hash" not in cfg
     events = controller._dispatcher.drain()
     assert any("Verify game files" in t for t in _log_texts(events))
 
@@ -517,7 +509,6 @@ def test_check_mirror_posts_online(controller, monkeypatch):
         for e in events
     )
     assert controller.mirror_statuses == {
-        "Test Server": "online",
         "Backup": "online",
     }
 
@@ -538,7 +529,6 @@ def test_check_mirror_posts_offline(controller, monkeypatch):
         for e in events
     )
     assert controller.mirror_statuses == {
-        "Test Server": "offline",
         "Backup": "offline",
     }
 
@@ -563,13 +553,12 @@ def test_check_mirror_http_error_still_online(controller, monkeypatch):
         for e in events
     )
     assert controller.mirror_statuses == {
-        "Test Server": "online",
         "Backup": "online",
     }
 
 
-def test_mirror_names_follow_launcher(controller):
-    assert controller.mirror_names() == ["Test Server", "Backup"]
+def test_http_mirror_names_follow_launcher(controller):
+    assert controller._http_mirror_names() == ["Backup"]
 
 
 # ── install-missing shortcuts ──────────────────────────────────────────────
@@ -650,15 +639,7 @@ def test_install_missing_recommended_addons_delegates(
     monkeypatch.setattr(sc.addons, "addons_path", lambda out: str(ap))
 
     assert controller.install_missing_recommended_addons() is True
-    assert fakes.addons.applied == 1
-    recs = fakes.addons.applied_recs[0]
-    assert [r["folder"] for r in recs] == ["ShaguTweaks"]
-    assert recs[0]["status"] == "available"
-    assert recs[0]["git"] == "https://x/ShaguTweaks"
-    events = controller._dispatcher.drain()
-    assert any(
-        "Installing recommended addons" in t for t in _log_texts(events)
-    )
+    assert fakes.addons.recommended_recs == 1
 
 
 def test_install_missing_recommended_addons_noop_when_all_present(
@@ -673,6 +654,9 @@ def test_install_missing_recommended_addons_noop_when_all_present(
     (ap / "pfUI").mkdir()
     monkeypatch.setattr(sc.addons, "RECOMMENDED_ADDONS", {"pfUI": "url"})
     monkeypatch.setattr(sc.addons, "addons_path", lambda out: str(ap))
+    monkeypatch.setattr(
+        controller._addons, "apply_recommended_addons", lambda: False
+    )
     assert controller.install_missing_recommended_addons() is False
     assert fakes.addons.applied == 0
 

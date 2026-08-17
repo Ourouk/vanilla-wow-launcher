@@ -11,7 +11,6 @@ from vanilla_wow_launcher.core.platform_support import (
     cache_dir,
     can_launch_client,
     can_manage_antivirus,
-    can_patch_client,
     config_dir,
     data_dir,
     default_out_dir,
@@ -60,14 +59,12 @@ def test_is_linux(fake_platform):
 def test_capabilities_windows(fake_platform):
     fake_platform("win32")
     assert can_launch_client()
-    assert can_patch_client()
     assert can_manage_antivirus()
 
 
 def test_capabilities_macos(fake_platform):
     fake_platform("darwin")
     assert not can_launch_client()
-    assert not can_patch_client()
     assert not can_manage_antivirus()
 
 
@@ -77,7 +74,6 @@ def test_capabilities_linux_without_umu(fake_platform, monkeypatch):
         "vanilla_wow_launcher.services.umu.umu_available", lambda: False
     )
     assert not can_launch_client()
-    assert not can_patch_client()
     assert not can_manage_antivirus()
 
 
@@ -87,7 +83,6 @@ def test_capabilities_linux_with_umu(fake_platform, monkeypatch):
         "vanilla_wow_launcher.services.umu.umu_available", lambda: True
     )
     assert can_launch_client()
-    assert not can_patch_client()
     assert not can_manage_antivirus()
 
 

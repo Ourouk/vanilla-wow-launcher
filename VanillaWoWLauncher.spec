@@ -10,9 +10,10 @@ from PyInstaller.utils.hooks import collect_all
 
 pyside_datas, pyside_binaries, pyside_hiddenimports = collect_all("PySide6")
 shiboken_datas, shiboken_binaries, shiboken_hiddenimports = collect_all("shiboken6")
-datas = pyside_datas + shiboken_datas
-binaries = pyside_binaries + shiboken_binaries
-hiddenimports = pyside_hiddenimports + shiboken_hiddenimports
+lt_datas, lt_binaries, lt_hiddenimports = collect_all("libtorrent")
+datas = pyside_datas + shiboken_datas + lt_datas
+binaries = pyside_binaries + shiboken_binaries + lt_binaries
+hiddenimports = pyside_hiddenimports + shiboken_hiddenimports + lt_hiddenimports
 
 # The panels/dialogs are constructed by the Qt main window at runtime, so
 # list every app module explicitly to be safe under a frozen build.
@@ -30,6 +31,7 @@ hiddenimports += [
     "vanilla_wow_launcher.services.mods",
     "vanilla_wow_launcher.services.news",
     "vanilla_wow_launcher.services.self_update",
+    "vanilla_wow_launcher.services.torrent_download",
     "vanilla_wow_launcher.services.tweaks",
     "vanilla_wow_launcher.controllers.addons",
     "vanilla_wow_launcher.controllers.mods",

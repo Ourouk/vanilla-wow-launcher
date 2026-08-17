@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
 )
 
 from ...controllers.settings import SettingsController
-from ...core import platform_support
+from ...core import launcher, platform_support
 from .bridge import ControllerBridge
 from .theme import Palette, theme_qss
 
@@ -223,11 +223,15 @@ class SettingsDialog(QDialog):
 
         self._mirror_rows: dict[str, QLabel] = {}
         self._mirror_dots: dict[str, QLabel] = {}
-        names = self._settings.mirror_names()
+        names = self._settings._http_mirror_names()
         if not names:
-            hint = QLabel(
-                "No server configured (launcher configuration missing).", body
+            cfg = launcher.config()
+            text = (
+                "No server configured (launcher configuration missing)."
+                if cfg is None or not cfg.server_url
+                else "No HTTP mirrors configured — update uses the server directly."
             )
+            hint = QLabel(text, body)
             hint.setObjectName("settingsMirrorEmpty")
             hint.setStyleSheet(f"color: {p.text_dim.name()}; font-size: 9pt;")
             body_layout.addWidget(hint)
@@ -257,6 +261,7 @@ class SettingsDialog(QDialog):
         refresh.setText("⟳  Check mirrors")
         refresh.setToolTip("Check server and mirror reachability")
         refresh.setCursor(Qt.PointingHandCursor)
+        refresh.setVisible(bool(names))
         refresh.setStyleSheet(
             f"QToolButton {{ color: {p.text_dim.name()}; font-size: 9pt; }}"
             f"QToolButton:hover {{ color: {p.gold.name()}; }}"
@@ -366,20 +371,6 @@ class SettingsDialog(QDialog):
             "settingsClientUpdate",
             self._settings.client_update_enabled,
             self._settings.set_client_update_enabled,
-        )
-        self._auto_mods_check = self._add_check(
-            rcol_layout,
-            "Install essential mods",
-            "settingsAutoMods",
-            bool(cfg.get("auto_install_mods", True)),
-            self._settings.set_auto_mods,
-        )
-        self._auto_addons_check = self._add_check(
-            rcol_layout,
-            "Install recommended addons",
-            "settingsAutoAddons",
-            bool(cfg.get("auto_install_addons", True)),
-            self._settings.set_auto_addons,
         )
 
         if platform_support.is_linux():
@@ -707,15 +698,3 @@ class SettingsDialog(QDialog):
 
     def _on_mirror_status(self, ok: bool, text: str):
         self._render_mirror_statuses()
-
-    # ── lifecycle ───────────────────────────────────────────────────────────
-
-    def done(self, result):
-        """Consume the close-time auto-install flags armed by the toggles so
-        toggling 'Install essential mods' / 'Install recommended addons' on
-        starts the missing installs when the dialog closes (idempotent)."""
-        if self._settings.take_pending_auto_mods():
-            self._settings.install_missing_essential_mods()
-        if self._settings.take_pending_auto_addons():
-            self._settings.install_missing_recommended_addons()
-        super().done(result)

@@ -1,8 +1,10 @@
 # AGENTS.md
 
 Vanilla WoW Launcher — a PySide6 desktop app (updater + mod manager for the
-Vanilla WoW client). Pure stdlib business logic; only third-party runtime dep
-is PySide6.
+Vanilla WoW client). Runtime deps: PySide6 (GUI) and libtorrent (the
+BitTorrent backend for client updates, imported lazily — the client update
+path degrades to per-file HTTP downloads when it isn't installed, so tests
+never need it); business logic is otherwise pure stdlib.
 
 ## Commands
 
@@ -10,7 +12,7 @@ is PySide6.
 uv sync                          # installs the package editable + PySide6
 uv run vanilla-wow-launcher      # run the app
 uv run python -m vanilla_wow_launcher # equivalent
-uv run pytest                    # full suite (696 pass, 3 display-only skips)
+uv run pytest                    # full suite; the 6 e2e tests skip unless RUN_E2E=1
 uv run ruff format .             # pep8-style 79-col wrapping ([tool.ruff])
 uv run ruff check .              # lint gate: E4/E7/E9/F/I/W/UP/B — run after edits
 ```
@@ -21,6 +23,10 @@ uv run ruff check .              # lint gate: E4/E7/E9/F/I/W/UP/B — run after 
   `line-length = 79` and `target-version = "py310"` (see `pyproject.toml`).
 - Real-display checks are opt-in and skipped by default:
   `QT_QPA_PLATFORM=xcb RUN_QT_DISPLAY_TESTS=1 uv run pytest tests/test_qt_display.py -k display`
+- **E2E tests** (`tests/test_torrent_update_e2e.py`, marked `e2e`) exercise the
+  *real* libtorrent against `context/client` + `context/wow-client.torrent`.
+  They skip unless `RUN_E2E=1` and both artifacts exist; CI runs
+  `uv run pytest -m "not e2e"`. Run them with `RUN_E2E=1 uv run pytest -m e2e`.
 - Windows build: `uv run pyinstaller --noconfirm --clean VanillaWoWLauncher.spec`
 - Linux AppImage: `./packaging/linux/build-appimage.sh` → `dist/VanillaWoWLauncher-$(uname -m).AppImage`
 - macOS DMG (universal2, build on macOS): `./packaging/macos/build-dmg.sh` → `dist/VanillaWoWLauncher-universal2.dmg`
@@ -36,15 +42,16 @@ uv run ruff check .              # lint gate: E4/E7/E9/F/I/W/UP/B — run after 
 src/vanilla_wow_launcher/
   cli.py          # entry point: config wiring + window loop
   core/           # constants, config_store, launcher, security_http, filesystem, helpers, log_sink, platform_support, errors
-  services/       # catalog, addons, mods, news, tweaks, client_update, self_update
+  services/       # catalog, addons, mods, news, tweaks, update_backend, self_update
   controllers/    # update, news, mods, addons, settings, tweaks (toolkit-agnostic)
   state/          # models.py (state dataclasses), events.py (dispatcher)
   ui/qt/          # app, main_window, bridge, theme, panels, dialogs
 ```
 
-- `context/` holds third-party reference sources (e.g. the OctoLauncher repo)
-  — not part of the package, not packaged or executed. Leave it alone; don't
-  lint/format/refactor anything under it.
+- `context/` holds third-party reference sources (Deluge, OctoLauncher) plus
+  the real `client/` + `wow-client.torrent` used by e2e — all git-ignored,
+  not part of the package, never executed. Leave it alone; don't lint/format/
+  refactor anything under it.
 - Inside the package use **relative** imports; tests import via
   `vanilla_wow_launcher.*` absolute paths (e.g.
   `from vanilla_wow_launcher.services.mods import ...`).
@@ -79,6 +86,46 @@ src/vanilla_wow_launcher/
   network-free on non-forced calls (cache → empty list); only Settings
   "Reload" forces a fetch. There is no bundled registry/recommended list —
   tests provide one by monkeypatching `mods.mods_registry()`.
+- Client updates get a second download backend: when the active download
+  source advertises a `torrent_url` (launcher config, server or mirror) and
+  libtorrent is importable, `UpdateWorker` bulk-downloads the stale files via
+  `services/update_backend/torrent_update.py` before its per-file HTTP `traverse()`, which
+  re-verifies every file and HTTP-resumes anything the torrent missed. Unit
+  tests inject a fake `libtorrent` via `sys.modules["libtorrent"]`; libtorrent
+  is never needed to run the suite (only the e2e tests use the real one).
+- The torrent root is **auto-detected** from the unique `WoW.exe` position in
+  the torrent: the parent of `WoW.exe` (case-insensitive) is the root prefix
+  stripped from every torrent path when mapping to the selected WoW folder
+  (e.g. `client/WoW.exe` → `<wow_folder>/WoW.exe`). A `TorrentLayoutError`
+  is raised when `WoW.exe` is missing, duplicated, or any file escapes the root.
+  **This stripping is applied to the actual read/write target** via
+  `_remap_torrent_to_out_dir()` (in both `verify()` and `download()`), which
+  remaps the torrent's file paths to `out_dir/local` with `torrent_info.remap_files`.
+  Without it, libtorrent reads at `out_dir/client/...` (double prefix) and the
+  whole client reports stale — the bug that spawned `BITTORRENT_UPDATER_NOTES.md`.
+  The remap is guarded by `hasattr(ti, "remap_files")` so the unit-test fakes
+  (which lack it) are a no-op. See `BITTORRENT_UPDATER_NOTES.md` for the full
+  libtorrent pitfall list.
+- **libtorrent 2.x gotchas** (verified against `2.1.1.0`): `torrent_status.pieces`
+  is a `list[bool]` → count present with `sum(pieces)`, never `p.count()` (no-arg
+  `TypeError`); `force_recheck()` must be followed by `resume()` or the recheck
+  never proceeds (Deluge pattern); `verified_pieces` is seed-mode-only and stays
+  `0` during verification — use `have_piece()`/piece count for progress.
+- **Torrent verification is offline**: the verification session uses an empty
+  `listen_interfaces` and disables DHT/LSD/UPnP/NAT-PMP and all peer
+  connections. No P2P activity occurs before the user presses UPDATE. Only the
+  download session enables networking.
+- When the manifest itself can't be fetched, the update falls back to a
+  manifest-less **BitTorrent recovery**: if the active source advertises a
+  `torrent_url` and libtorrent is importable, `UpdateWorker._recovery_download()`
+  downloads the *whole* torrent (`TorrentDownloader.download(url, None)`), whose
+  piece hashes (the `.torrent` arrived over TLS) stand in for the manifest's
+  per-file SHA-1. It posts `__TORRENT_RECOVERY_DONE__` (controller keeps
+  `manifest_available=False`); a failed verify offers this via an enabled
+  UPDATE button when `torrent_recovery_available()` (`LauncherConfig.has_torrent()`
+  + libtorrent present, network-free) and the client isn't known-ready.
+- The launcher never binary-patches `WoW.exe` — runtime client fixes are left
+  to the VanillaFixes loader mod. The only tweak channel is `Config.wtf`.
 - Tests get a launcher config from the autouse `_launcher_env` fixture in
   `tests/conftest.py` (server `https://launcher.test` + a "Backup" mirror) —
   never rely on real network in tests. Launcher state is **process-global**:
