@@ -39,7 +39,7 @@ echo "==> Merging libtorrent into a universal2 binary"
 PYTHON="$ROOT/.venv/bin/python"
 LT_DIR="$("$PYTHON" -c 'import os, libtorrent; print(os.path.dirname(libtorrent.__file__))')"
 LT_SO="$(find "$LT_DIR" -maxdepth 1 -name '*.so' | head -n 1)"
-if lipo -info "$LT_SO" | grep -q "fat file"; then
+if lipo -info "$LT_SO" | grep -q "in the fat file"; then
   echo "    libtorrent is already universal; skipping merge"
 else
   CUR_ARCH="$(lipo -info "$LT_SO" | tr -d ' ' | awk -F: '/Non-fat/{print $NF; exit}')"
