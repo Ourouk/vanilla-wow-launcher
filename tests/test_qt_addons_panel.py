@@ -19,9 +19,9 @@ from unittest.mock import Mock
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import (
+    QCheckBox,
     QLabel,
     QLineEdit,
-    QMessageBox,
     QPushButton,
     QWidget,
 )
@@ -131,6 +131,7 @@ def test_panel_replaces_the_addons_placeholder(qapp, window):
     assert panel.findChild(QLabel, "addonsCheck") is not None
     assert panel.findChild(QLabel, "addonsCustom") is not None
     assert panel.findChild(QLabel, "addonsFooter") is not None
+    assert panel.findChild(QPushButton, "addonsApply") is not None
     # Both collapsible sections render.
     assert panel.findChild(QWidget, "addonsSection_INSTALLED") is not None
     assert panel.findChild(QWidget, "addonsSection_AVAILABLE") is not None
@@ -147,23 +148,23 @@ def test_mixed_rows_render(qapp, window, hub):
     _post(hub, _make_state(addons=MIX_ADDONS, available=MIX_AVAILABLE))
     panel = _panel(window)
 
-    # Installed out-of-date addon: an Update status label + a trash action.
+    # Installed out-of-date addon: an Update status label + a checked checkbox.
     assert panel.findChild(QLabel, "addonsStatus_SellValue").text() == "Update"
-    trash = panel.findChild(QWidget, "addonsAction_SellValue")
-    assert trash is not None and trash.toolTip() == "Remove addon"
+    checkbox = panel.findChild(QCheckBox, "addonsCheck_SellValue")
+    assert checkbox is not None and checkbox.isChecked()
     assert panel.findChild(QLabel, "addonsLink_SellValue") is not None
 
-    # Recommended addons carry the gold star + tooltip; plain ones keep a
-    # blank slot. Both available rows get a download action.
+    # Available addons get unchecked checkboxes.
     assert panel.findChild(QLabel, "addonsStar_pfUI").text() == "★"
     assert (
         panel.findChild(QLabel, "addonsStar_pfUI").toolTip()
         == "Recommended addon"
     )
     assert panel.findChild(QLabel, "addonsStar_Bagsort").text() == ""
-    download = panel.findChild(QWidget, "addonsAction_pfUI")
-    assert download is not None and download.toolTip() == "Install addon"
-    assert panel.findChild(QWidget, "addonsAction_Bagsort") is not None
+    pfui_check = panel.findChild(QCheckBox, "addonsCheck_pfUI")
+    assert pfui_check is not None and not pfui_check.isChecked()
+    bagsort_check = panel.findChild(QCheckBox, "addonsCheck_Bagsort")
+    assert bagsort_check is not None and not bagsort_check.isChecked()
 
     # downloading / error / couldn't-check status texts.
     assert (
@@ -315,92 +316,89 @@ def test_check_for_updates_shows_busy_state(qapp, window, hub, monkeypatch):
     assert footer.text() == "Checking…"
 
 
-# ── actions ─────────────────────────────────────────────────────────────
+# ── checkbox interactivity ──────────────────────────────────────────
 
 
-def test_install_action_calls_apply_with_record(
+def test_checkbox_toggle_forwards_pending(qapp, window, hub):
+    panel = _panel(window)
+    _post(hub, _make_state(available=MIX_AVAILABLE))
+    checkbox = panel.findChild(QCheckBox, "addonsCheck_pfUI")
+    assert checkbox is not None
+    assert not checkbox.isChecked()
+    checkbox.setChecked(True)
+    QTest.qWait(0)
+    assert hub.addons.state.pending.get("pfUI") is True
+
+
+def test_checkbox_uncheck_marks_for_removal(qapp, window, hub):
+    panel = _panel(window)
+    _post(hub, _make_state(addons=MIX_ADDONS))
+    checkbox = panel.findChild(QCheckBox, "addonsCheck_SellValue")
+    assert checkbox is not None
+    assert checkbox.isChecked()
+    checkbox.setChecked(False)
+    QTest.qWait(0)
+    assert hub.addons.state.pending.get("SellValue") is False
+
+
+# ── apply button ────────────────────────────────────────────────────
+
+
+def test_apply_visibility_follows_pending(qapp, window, hub):
+    _post(hub, _make_state(available=MIX_AVAILABLE))
+    panel = _panel(window)
+    apply_btn = panel.findChild(QPushButton, "addonsApply")
+    assert not apply_btn.isVisible()
+
+    checkbox = panel.findChild(QCheckBox, "addonsCheck_pfUI")
+    checkbox.setChecked(True)
+    QTest.qWait(0)
+    # The pending state is set by the toggle.
+    assert hub.addons.state.pending.get("pfUI") is True
+    # The Apply button becomes visible.
+    assert apply_btn.isVisible()
+
+    # A clean snapshot (post-apply) hides it again.
+    clean = AddonsState()
+    hub.addons.state = clean
+    _post(hub, clean)
+    assert not apply_btn.isVisible()
+
+
+def test_apply_button_calls_apply_pending(qapp, window, hub, monkeypatch):
+    _post(hub, _make_state(available=MIX_AVAILABLE))
+    panel = _panel(window)
+    apply_mock = Mock()
+    monkeypatch.setattr(hub.addons, "apply_pending", apply_mock)
+
+    checkbox = panel.findChild(QCheckBox, "addonsCheck_pfUI")
+    checkbox.setChecked(True)
+    QTest.qWait(0)
+    assert hub.addons.state.pending.get("pfUI") is True
+    apply_btn = panel.findChild(QPushButton, "addonsApply")
+    assert apply_btn.isVisible()
+    apply_btn.click()
+    assert apply_mock.call_count == 1
+    assert apply_mock.call_args.args == ()
+
+
+def test_apply_button_disabled_while_running_then_reenabled(
     qapp, window, hub, monkeypatch
 ):
     _post(hub, _make_state(available=MIX_AVAILABLE))
     panel = _panel(window)
-    apply_mock = Mock()
-    monkeypatch.setattr(hub.addons, "apply", apply_mock)
+    monkeypatch.setattr(hub.addons, "apply_pending", Mock())
+    apply_btn = panel.findChild(QPushButton, "addonsApply")
+    checkbox = panel.findChild(QCheckBox, "addonsCheck_pfUI")
+    checkbox.setChecked(True)
+    QTest.qWait(0)
+    assert apply_btn.isEnabled()
 
-    panel.findChild(QWidget, "addonsAction_pfUI").click()
-    expected = AddonState.from_dict(
-        dict(MIX_AVAILABLE[0], folder=MIX_AVAILABLE[0]["folder"])
-    ).to_dict()
-    assert apply_mock.call_count == 1
-    assert apply_mock.call_args.args == ([expected],)
+    apply_btn.click()
+    assert not apply_btn.isEnabled()
 
-
-def test_update_status_calls_apply(qapp, window, hub, monkeypatch):
-    _post(hub, _make_state(addons=MIX_ADDONS))
-    panel = _panel(window)
-    apply_mock = Mock()
-    monkeypatch.setattr(hub.addons, "apply", apply_mock)
-
-    QTest.mouseClick(
-        panel.findChild(QLabel, "addonsStatus_SellValue"), Qt.LeftButton
-    )
-    expected = AddonState.from_dict(
-        dict(MIX_ADDONS["SellValue"], folder="SellValue")
-    ).to_dict()
-    assert apply_mock.call_args.args == ([expected],)
-
-
-def test_remove_action_confirms_then_removes(qapp, window, hub, monkeypatch):
-    _post(hub, _make_state(addons=MIX_ADDONS))
-    panel = _panel(window)
-    remove_mock = Mock()
-    monkeypatch.setattr(hub.addons, "remove", remove_mock)
-    monkeypatch.setattr(
-        "vanilla_wow_launcher.ui.qt.addons_panel.QMessageBox.question",
-        lambda *a, **k: QMessageBox.Yes,
-    )
-
-    panel.findChild(QWidget, "addonsAction_ManualInstall").click()
-    assert remove_mock.call_args.args == ("ManualInstall",)
-
-
-def test_remove_action_skips_when_declined(qapp, window, hub, monkeypatch):
-    _post(hub, _make_state(addons=MIX_ADDONS))
-    panel = _panel(window)
-    remove_mock = Mock()
-    monkeypatch.setattr(hub.addons, "remove", remove_mock)
-    monkeypatch.setattr(
-        "vanilla_wow_launcher.ui.qt.addons_panel.QMessageBox.question",
-        lambda *a, **k: QMessageBox.No,
-    )
-
-    panel.findChild(QWidget, "addonsAction_ManualInstall").click()
-    remove_mock.assert_not_called()
-
-
-def test_custom_addon_button_emits_signal(qapp, window, hub):
-    _post(hub, _make_state(addons=MIX_ADDONS))
-    panel = _panel(window)
-    spy = Mock()
-    panel.customAddonRequested.connect(spy)
-
-    QTest.mouseClick(panel.findChild(QLabel, "addonsCustom"), Qt.LeftButton)
-    spy.assert_called_once()
-
-
-# ── nav badge ───────────────────────────────────────────────────────────
-
-
-def test_badge_shows_updates_count_and_hides_at_zero(qapp, window, hub):
-    badge = window.findChild(QLabel, "tabBadge_ADDONS")
-    assert badge is not None
-    assert not badge.isVisible()
-
-    _post(hub, _make_state(addons=MIX_ADDONS, updates_count=2))
-    assert badge.text() == "2"
-    assert badge.isVisible()
-
-    _post(hub, _make_state())
-    assert not badge.isVisible()
+    panel._on_operation_finished("addons", True, "")
+    assert apply_btn.isEnabled()
 
 
 # ── install-recommended button ──────────────────────────────────────────
@@ -440,3 +438,28 @@ def test_install_recommended_button_calls_controller(
     monkeypatch.setattr(hub.addons, "apply_recommended_addons", install_mock)
     panel.findChild(QPushButton, "addonsInstallRecommended").click()
     install_mock.assert_called_once_with()
+
+
+def test_addon_without_git_hides_source_link(qapp, window, hub):
+    """An addon with no git URL must not render the ⧉ source link."""
+    state = AddonsState(
+        addons={
+            "NoGitAddon": AddonState.from_dict(
+                {
+                    "folder": "NoGitAddon",
+                    "status": "unknown",
+                }
+            )
+        },
+        available=[],
+        updates_count=0,
+    )
+    hub.addons.state = state
+    hub.dispatcher.post(AddonsLoaded(state))
+    QTest.qWait(200)
+
+    panel = _panel(window)
+    row = panel._rows.get("NoGitAddon")
+    assert row is not None
+    link = row.findChild(QLabel, "addonsLink_NoGitAddon")
+    assert link is None

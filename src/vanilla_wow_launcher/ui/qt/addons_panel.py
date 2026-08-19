@@ -2,7 +2,7 @@
 
 Renders the controller's AddonsState into a searchable, collapsible two-section
 list of `AddonRow` widgets — recommendation star, colored title, word-wrapped
-description, repo link, status text and an install/update/remove action — plus
+description, repo link, status text and a checkbox — plus
 a check-for-updates / custom-addon footer and a nav-badge callback driven by
 the out-of-date count. Rows are rebuilt from every AddonsLoaded snapshot the
 bridge forwards; user actions are forwarded straight into the toolkit-agnostic
@@ -12,10 +12,10 @@ AddonsController. The list shell is shared with the mods panel via
 
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
+    QCheckBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QMessageBox,
     QPushButton,
     QToolButton,
     QWidget,
@@ -38,7 +38,8 @@ _INTERFACE_VERSION = "11200"
 
 class AddonRow(QWidget):
     """One addon row: star badge, colored title, description, repo link,
-    status text and an install/update/remove action."""
+    status text and a checkbox — checked when installed, unchecked when
+    available. Toggling the checkbox records a pending install/remove."""
 
     def __init__(
         self,
@@ -47,8 +48,7 @@ class AddonRow(QWidget):
         recommended,
         installed_names,
         palette: Palette,
-        on_install,
-        on_remove,
+        on_toggle,
         on_retry=None,
         parent=None,
     ):
@@ -103,7 +103,7 @@ class AddonRow(QWidget):
 
         top_layout.addStretch(1)
 
-        # Right side pinned to the edge: status text, repo link, action.
+        # Right side pinned to the edge: status text, repo link, checkbox.
         if rec.status == "downloading":
             status = QLabel("downloading…", top)
             status.setStyleSheet(f"color: {p.text_dim.name()};")
@@ -137,7 +137,7 @@ class AddonRow(QWidget):
         elif rec.status == "outOfDate" and installed:
             status = ClickableLabel("Update", top)
             status.setStyleSheet(f"color: {p.gold.name()}; font-weight: bold;")
-            status.clicked.connect(lambda: on_install(rec))
+            status.clicked.connect(lambda: on_toggle(rec.folder, True))
         elif warnings:
             status = QLabel(f"⚠ {warnings[0]}", top)
             status.setStyleSheet(f"color: {p.warn.name()};")
@@ -155,30 +155,17 @@ class AddonRow(QWidget):
             self.link_label = add_row_link(
                 top_layout, f"addonsLink_{rec.folder}", repo_url, p
             )
-
-        if installed:
-            action = QPushButton("🗑", top)
-            action.setToolTip("Remove addon")
-            action.setStyleSheet(
-                f"QPushButton {{ color: {p.err.name()};"
-                f" border: 1px solid {p.panel_bdr.name()}; border-radius: 4px;"
-                f" background-color: {p.hdr.name()}; padding: 2px 8px; }}"
-                f"QPushButton:hover {{ border-color: {p.err.name()}; }}"
-            )
-            action.clicked.connect(lambda: on_remove(rec.folder))
         else:
-            action = QPushButton("⬇", top)
-            action.setToolTip("Install addon")
-            action.setStyleSheet(
-                f"QPushButton {{ color: {p.ok.name()};"
-                f" border: 1px solid {p.panel_bdr.name()}; border-radius: 4px;"
-                f" background-color: {p.hdr.name()}; padding: 2px 8px; }}"
-                f"QPushButton:hover {{ border-color: {p.ok.name()}; }}"
-            )
-            action.clicked.connect(lambda: on_install(rec))
-        action.setObjectName(f"addonsAction_{rec.folder}")
-        action.setCursor(Qt.PointingHandCursor)
-        top_layout.addWidget(action, 0, Qt.AlignTop)
+            self.link_label = None
+
+        self.checkbox = QCheckBox(top)
+        self.checkbox.setObjectName(f"addonsCheck_{rec.folder}")
+        self.checkbox.setChecked(installed)
+        self.checkbox.setCursor(Qt.PointingHandCursor)
+        self.checkbox.toggled.connect(
+            lambda checked, f=rec.folder: on_toggle(f, checked)
+        )
+        top_layout.addWidget(self.checkbox, 0, Qt.AlignTop)
 
         root.addWidget(top)
 
@@ -297,6 +284,24 @@ class AddonsPanel(ScrollListPanel):
 
         footer_layout.addStretch(1)
 
+        self._apply_button = QPushButton("Apply", footer)
+        self._apply_button.setObjectName("addonsApply")
+        self._apply_button.setCursor(Qt.PointingHandCursor)
+        self._apply_button.setStyleSheet(
+            f"QPushButton {{ color: {p.ok.name()};"
+            f" border: 1px solid {p.ok.name()}; border-radius: 4px;"
+            f" background-color: {p.panel_bdr.name()};"
+            f" padding: 4px 16px; font-weight: bold; }}"
+            f"QPushButton:hover {{ background-color: {p.ok.name()};"
+            f" color: {p.hdr.name()}; }}"
+            f"QPushButton:disabled {{ color: {p.text_dim.name()};"
+            f" border-color: {p.panel_bdr.name()};"
+            f" background-color: {p.panel.name()}; }}"
+        )
+        self._apply_button.clicked.connect(self._apply)
+        self._apply_button.setVisible(False)
+        footer_layout.addWidget(self._apply_button)
+
         custom = ClickableLabel("+  Add custom git addon", footer)
         custom.setObjectName("addonsCustom")
         custom.setStyleSheet(f"color: {p.pink.name()}; font-weight: bold;")
@@ -359,8 +364,7 @@ class AddonsPanel(ScrollListPanel):
                         recommended=rec.folder in self._addons.recommended,
                         installed_names=installed_names,
                         palette=self._palette,
-                        on_install=self._on_install,
-                        on_remove=self._on_remove,
+                        on_toggle=self._on_toggle,
                         on_retry=self._on_retry,
                         parent=self._content,
                     )
@@ -417,17 +421,17 @@ class AddonsPanel(ScrollListPanel):
 
     # ── actions ─────────────────────────────────────────────────────────────
 
-    def _on_install(self, rec):
-        if self._addons.apply([rec.to_dict()]):
-            self._render()
+    def _on_toggle(self, folder: str, checked: bool):
+        is_installed = folder in self._addons.state.addons
+        if checked == is_installed:
+            self._addons.state.pending.pop(folder, None)
+        else:
+            self._addons.toggle(folder, checked)
+        self._refresh_apply_visibility()
 
-    def _on_remove(self, folder: str):
-        ret = QMessageBox.question(
-            self, "Remove addon", f"Delete {folder} and all of its files?"
-        )
-        if ret != QMessageBox.Yes:
-            return
-        self._addons.remove(folder)
+    def _apply(self):
+        self._set_running(True)
+        self._addons.apply_pending()
 
     def _on_check(self):
         if self._addons.verify(force=True):
@@ -439,12 +443,23 @@ class AddonsPanel(ScrollListPanel):
         self._on_check()
 
     def _on_update_all(self):
+        self._set_running(True)
         if self._addons.apply(self._addons.update_all()):
             self._render()
 
     def _on_install_recommended(self):
+        self._set_running(True)
         if self._addons.apply_recommended_addons():
             self._render()
+
+    def _set_running(self, running: bool):
+        self._running = running
+        self._apply_button.setEnabled(not running)
+        self._refresh_recommended_visibility()
+
+    def _refresh_apply_visibility(self):
+        """Apply is offered only when there are pending checkbox changes."""
+        self._apply_button.setVisible(bool(self._addons.state.pending))
 
     # ── footer ──────────────────────────────────────────────────────────────
 
@@ -470,5 +485,7 @@ class AddonsPanel(ScrollListPanel):
     # ── event hooks ────────────────────────────────────────────────────────
 
     def _after_operation(self):
+        self._set_running(False)
         self._refresh_footer()
         self._refresh_recommended_visibility()
+        self._refresh_apply_visibility()

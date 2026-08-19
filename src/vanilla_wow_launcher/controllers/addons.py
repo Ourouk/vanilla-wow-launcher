@@ -360,6 +360,27 @@ class AddonsController:
         threading.Thread(target=worker, daemon=True).start()
         return True
 
+    def toggle(self, folder: str, enabled: bool):
+        """Record a pending checkbox change for the addon."""
+        self.state.pending[folder] = enabled
+
+    def apply_pending(self) -> bool:
+        """Install/update checked addons and remove unchecked ones.
+
+        Returns True when the worker actually started."""
+        if self.state.busy or not self.state.pending:
+            return False
+        client = (self._get_out_dir() or "").strip()
+        if not client:
+            return False
+        self.state.busy = True
+        self.state.installing = True
+        self._dispatcher.post(StatusChanged("Applying addon changes…"))
+        threading.Thread(
+            target=self._apply_pending_worker, args=(client,), daemon=True
+        ).start()
+        return True
+
     def apply(self, recs) -> bool:
         """Install/update the given addon records sequentially. Returns True
         when the worker actually started."""
@@ -375,9 +396,6 @@ class AddonsController:
                 rec_state = AddonState.from_dict(rec)
                 self.state.addons[rec["folder"]] = rec_state
             else:
-                # Existing record (this is an update, not a first install) —
-                # flip its status in place so the panel's immediate _render()
-                # shows "downloading…" instead of the stale outOfDate.
                 rec_state.status = "downloading"
                 rec_state.error = None
         self._dispatcher.post(StatusChanged("Downloading addons…"))
@@ -653,4 +671,111 @@ class AddonsController:
             # outOfDate (e.g. when RECOMMENDED_ADDONS defines a curated
             # fork with a different git URL than the catalog entry the
             # user just installed).
+            self.verify(remote_checks=False)
+
+    def _apply_pending_worker(self, client: str):
+        """Install checked addons and remove unchecked ones from pending."""
+        pending = self.state.pending
+        failed = []
+
+        # Process removals first (unchecked addons).
+        for folder, enabled in list(pending.items()):
+            if enabled:
+                continue
+            try:
+                dirp = os.path.join(addons.addons_path(client), folder)
+                if os.path.isdir(dirp):
+                    shutil.rmtree(dirp)
+                config_store.update_config(
+                    lambda c, f=folder: c.get("addons", {}).pop(f, None)
+                )
+                self.state.addons.pop(folder, None)
+                self.state.errors.pop(folder, None)
+                self._dispatcher.post(
+                    LogMessage(f"Removed addon {folder}\n", "dim")
+                )
+            except Exception as e:
+                err = describe_install_error(e)
+                self._dispatcher.post(
+                    LogMessage(
+                        f"Failed to remove addon {folder}: {err}", "err"
+                    )
+                )
+                failed.append(folder)
+
+        # Process installs/updates (checked addons).
+        for folder, enabled in list(pending.items()):
+            if not enabled:
+                continue
+            rec = next(
+                (a for a in self.state.available if a.folder == folder),
+                None,
+            )
+            if rec is None:
+                continue
+            try:
+                if not rec.git or not addons.is_allowed_git_url(rec.git):
+                    raise RuntimeError(
+                        "Addon URL is not from an allowed git host"
+                    )
+                sha = addons.addon_remote_sha(
+                    rec.git,
+                    rec.branch,
+                    rec.ref,
+                    force=True,
+                    raise_errors=True,
+                )
+                if not sha:
+                    raise RuntimeError("Could not resolve remote commit")
+                addons.install_addon_files(
+                    client, rec.folder, rec.git, sha
+                )
+                if rec.folder == "pfUI":
+                    addons.patch_pfui_default_profile(client)
+                record = {
+                    "git": rec.git,
+                    "branch": rec.branch,
+                    "ref": rec.ref,
+                    "sha": sha,
+                }
+                config_store.update_config(
+                    lambda c, f=rec.folder, r=record: c.setdefault(
+                        "addons", {}
+                    ).__setitem__(f, r)
+                )
+                self.state.errors.pop(rec.folder, None)
+                st_rec = self.state.addons.get(rec.folder)
+                if st_rec is not None:
+                    st_rec.status = "upToDate"
+                    st_rec.error = None
+                self._dispatcher.post(AddonsLoaded(self.state))
+                self._dispatcher.post(
+                    LogMessage(f"  ✓ Addon {rec.folder} installed.")
+                )
+            except Exception as e:
+                err = describe_install_error(e)
+                self._dispatcher.post(
+                    LogMessage(f"  ✗ Addon {rec.folder}: {err}")
+                )
+                st_rec = self.state.addons.get(rec.folder)
+                if st_rec is not None:
+                    st_rec.status = "invalid"
+                    st_rec.error = err
+                self.state.errors[rec.folder] = AddonError(
+                    err, rec.git
+                )
+                failed.append(rec.folder)
+
+        self.state.pending = {}
+        self.state.busy = False
+        self.state.installing = False
+        self.state.verified_ts = 0.0
+        self._dispatcher.post(
+            OperationFinished(
+                "addons",
+                not failed,
+                "" if not failed else f"Failed addons: {', '.join(failed)}",
+            )
+        )
+        if failed:
             self.verify(remote_checks=False)

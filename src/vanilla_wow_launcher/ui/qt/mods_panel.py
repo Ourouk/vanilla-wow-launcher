@@ -103,9 +103,12 @@ class ModRow(QWidget):
             )
             top_layout.addWidget(self.action_button)
 
-        self.link_label = add_row_link(
-            top_layout, f"modsLink_{mid}", mod["repo_url"], p
-        )
+        if mod.get("repo_url"):
+            self.link_label = add_row_link(
+                top_layout, f"modsLink_{mid}", mod["repo_url"], p
+            )
+        else:
+            self.link_label = None
 
         self.ignore_check = QCheckBox(top)
         self.ignore_check.setObjectName(f"modsIgnore_{mid}")

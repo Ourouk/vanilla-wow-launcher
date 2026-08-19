@@ -163,6 +163,7 @@ class AddonsState:
     installing: bool = False
     verified_ts: float = 0.0
     errors: dict[str, AddonError] = field(default_factory=dict)
+    pending: dict[str, bool] = field(default_factory=dict)
     sections_open: dict[str, bool] = field(
         default_factory=lambda: {"INSTALLED": True, "AVAILABLE": True}
     )

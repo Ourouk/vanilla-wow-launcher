@@ -7,14 +7,40 @@ Owns the process-wide QApplication singleton (`create_qt_app`) and the
 the business logic in the toolkit-agnostic controllers.
 """
 
+import os
+import sys
+
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QGuiApplication
+from PySide6.QtGui import QFontDatabase, QGuiApplication
 from PySide6.QtWidgets import QApplication
 
 from . import metrics as ui_metrics
 from .bridge import ControllerHub
 from .main_window import MainWindow
 from .metrics import initial_window_size
+
+
+def _load_bundled_font():
+    """Load the bundled STIX Two Math font so ⌕ and ⧉ glyphs render."""
+    if getattr(sys, "frozen", False):
+        font_dir = os.path.join(sys._MEIPASS, "fonts")
+    else:
+        font_dir = os.path.join(
+            os.path.dirname(
+                os.path.dirname(
+                    os.path.dirname(
+                        os.path.dirname(
+                            os.path.dirname(os.path.abspath(__file__))
+                        )
+                    )
+                )
+            ),
+            "packaging",
+            "fonts",
+        )
+    font_path = os.path.join(font_dir, "STIXTwoMath-Regular.otf")
+    if os.path.isfile(font_path):
+        QFontDatabase.addApplicationFont(font_path)
 
 
 def create_qt_app():
@@ -31,7 +57,9 @@ def create_qt_app():
     QGuiApplication.setHighDpiScaleFactorRoundingPolicy(
         Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
     )
-    return QApplication([])
+    app = QApplication([])
+    _load_bundled_font()
+    return app
 
 
 def _initial_size(app):

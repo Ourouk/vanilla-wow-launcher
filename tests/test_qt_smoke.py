@@ -470,3 +470,35 @@ def test_addons_loaded_renders_rows_and_updates_badge(qapp, app_no_startup):
     badge = win._tabBadges["ADDONS"]
     assert badge.text() == "1"
     assert badge.isVisible()
+
+
+# ── bundled font ────────────────────────────────────────────────────
+
+
+def test_bundled_font_file_exists():
+    """STIXTwoMath-Regular.otf must be present in packaging/fonts/."""
+    font_path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "packaging",
+        "fonts",
+        "STIXTwoMath-Regular.otf",
+    )
+    assert os.path.isfile(font_path)
+
+
+def test_bundled_font_loads_into_qt(qapp):
+    """The bundled STIX Two Math font must be registered with Qt."""
+    from PySide6.QtGui import QFontDatabase
+
+    font_path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "packaging",
+        "fonts",
+        "STIXTwoMath-Regular.otf",
+    )
+    assert os.path.isfile(font_path)
+    font_id = QFontDatabase.addApplicationFont(font_path)
+    assert font_id != -1
+    families = QFontDatabase.applicationFontFamilies(font_id)
+    assert len(families) > 0
+    assert "STIX Two Math" in families

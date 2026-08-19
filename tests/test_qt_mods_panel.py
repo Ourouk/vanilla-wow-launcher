@@ -53,6 +53,13 @@ FAKE_REGISTRY = [
         "description": "Third mod.",
         "source": {"kind": "github_release"},
     },
+    {
+        "id": "NoRepoMod",
+        "name": "NoRepoMod",
+        "essential": False,
+        "description": "Mod with no repo URL.",
+        "source": {"kind": "github_release"},
+    },
 ]
 
 
@@ -396,3 +403,21 @@ def test_install_essential_button_calls_controller(
     monkeypatch.setattr(hub.mods, "apply_essential_mods", install_mock)
     panel.findChild(QPushButton, "modsInstallRecommended").click()
     install_mock.assert_called_once_with()
+
+
+def test_mod_without_repo_url_hides_source_link(qapp, window, hub):
+    """A mod with no repo_url must not render the ⧉ source link."""
+    state = ModsState(
+        records={
+            "NoRepoMod": ModState(present=False)
+        },
+        latest_versions={"NoRepoMod": "1.0"},
+    )
+    hub.mods.state = state
+    _post(hub, state)
+
+    panel = _panel(window)
+    row = panel.findChild(QWidget, "modsRow_NoRepoMod")
+    assert row is not None
+    link = row.findChild(QLabel, "modsLink_NoRepoMod")
+    assert link is None

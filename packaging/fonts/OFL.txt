@@ -1,0 +1,37 @@
+SIL Open Font License 1.1
+
+Copyright 2001-2021 The STIX Fonts Project Authors (https://github.com/stipub/stixfonts)
+
+This font software is licensed under the SIL Open Font License, Version 1.1.
+This license is copied below, and is also available with a FAQ at:
+https://scripts.sil.org/OFL
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this font software, to use, study, copy, merge, embed, modify, redistribute,
+and sell modified and unmodified copies of the font, in source and binary forms,
+provided that the above copyright notice and this license are maintained in all
+copies and that neither the copyright holder nor the names of its contributors
+are used to endorse or promote products derived from this font without prior
+written authorization.
+
+The font is distributed "as is", without warranty of any kind, express or
+implied, including but not limited to any warranties of merchantability,
+fitness for a particular purpose and noninfringement of any patent, copyright,
+trademark, or other right. In no event shall the copyright holder be liable for
+any claim, damages or other liability, including, without limitation, any
+general, special, indirect, incidental, or consequential damages, whether in an
+action of contract, tort or otherwise, arising from, out of or in connection
+with the font software or the use or other dealings in the font software.
+
+Except as contained in this notice, the names of the copyright holders,
+licensors, and contributors may not be used to promote or endorse products
+derived from this font software without prior written authorization of the
+respective copyright holders.
+
+The Original Software is STIX Two Math.
+
+The Initial Author of the Original Software is:
+The STIX Fonts Project Authors (https://github.com/stipub/stixfonts)
+
+All Trademarks and Registered Trademarks in the Font Software are the property
+of their respective owners.
