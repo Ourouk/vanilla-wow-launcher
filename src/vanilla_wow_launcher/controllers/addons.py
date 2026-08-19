@@ -440,7 +440,6 @@ class AddonsController:
             if rec.status == "outOfDate"
         )
         self._dispatcher.post(AddonsLoaded(self.state))
-        self._dispatcher.post(OperationFinished("addons_verify", True, ""))
 
     def apply_recommended_addons(self) -> bool:
         """Install every recommended addon (from catalog + constant) not yet

@@ -30,7 +30,6 @@ together with the bridge — the main window may equally do the assembly by hand
 from PySide6.QtCore import QObject, QTimer, Signal, Slot
 
 from ...controllers.addons import AddonsController
-from ...controllers.full_update import FullUpdateController
 from ...controllers.mods import ModsController
 from ...controllers.news import NewsController
 from ...controllers.settings import SettingsController
@@ -151,9 +150,6 @@ class ControllerHub:
         self.mods = ModsController(self.dispatcher, get_out_dir)
         self.addons = AddonsController(self.dispatcher, get_out_dir)
         self.tweaks = TweaksController(self.dispatcher, get_out_dir)
-        self.full_update = FullUpdateController(
-            self.dispatcher, self.updater, self.mods, self.addons
-        )
         self.settings = SettingsController(
             self.dispatcher, self.updater, self.mods, self.addons, self.news
         )

@@ -138,7 +138,7 @@ class UpdatePanel(QWidget):
             # clearing here would leave the list empty for the whole update.
 
     def operation_finished(self, kind: str, ok: bool, message: str):
-        if kind in ("update", "verify", "full_update"):
+        if kind in ("update", "verify"):
             if ok:
                 self._phase.setText(
                     "Verified" if kind == "verify" else "Complete"
@@ -159,6 +159,6 @@ class UpdatePanel(QWidget):
             self._phase.setText("Complete")
 
     def operation_failed(self, kind: str, message: str):
-        if kind in ("update", "verify", "full_update"):
+        if kind in ("update", "verify"):
             self._phase.setText("Failed")
             self._file.setText(message or "Update failed.")

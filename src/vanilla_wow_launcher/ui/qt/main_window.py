@@ -30,7 +30,6 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ...controllers.update import Readiness
 from ...core import launcher
 from ...core.constants import UPDATER_VERSION
 from ...core.log_sink import _LOG_Q, log
@@ -658,7 +657,7 @@ class MainWindow(QMainWindow):
         """Footer PLAY/UPDATE/TERMINATE click — launch when ready, update
         otherwise, terminate a running game. Busy states are ignored."""
         updater = self._hub.updater
-        if updater.running or self._hub.full_update.running:
+        if updater.running:
             return
         ready = updater.compute_readiness(
             addons_installing=self._hub.addons.installing
@@ -680,7 +679,7 @@ class MainWindow(QMainWindow):
             )
             return
         self.switch_tab("UPDATE")
-        self._hub.full_update.start()
+        updater.start_update()
         self._refresh_ready_state()
 
     def _start_verify(self, overwrite_config: bool = False):
@@ -735,8 +734,6 @@ class MainWindow(QMainWindow):
         self._apply_readiness(self._readiness())
 
     def _readiness(self):
-        if self._hub.full_update.running:
-            return Readiness("busy", "Updating…", "Updating game…")
         return self._hub.updater.compute_readiness(
             addons_installing=self._hub.addons.installing
         )
@@ -827,10 +824,7 @@ class MainWindow(QMainWindow):
         # Ask live update workers to stop before the UI goes away, so a
         # background download/verify can't keep mutating files or config
         # after the window is closed.
-        if self._hub.full_update.running:
-            self._hub.full_update.cancel()
-        else:
-            self._hub.updater.cancel()
+        self._hub.updater.cancel()
         self._hub.close()
 
     def _stop_timers(self):
