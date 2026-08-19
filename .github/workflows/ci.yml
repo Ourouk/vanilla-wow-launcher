@@ -15,7 +15,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libegl1
       - name: Sync dependencies
         run: uv sync --dev
-       - name: Run the test suite
+      - name: Run the test suite
         # test_baseline.py enforces UPDATER_VERSION == pyproject.toml version.
         # e2e tests (real WoW client under context/) are skipped here and run
         # only locally via `RUN_E2E=1 uv run pytest -m e2e`.
