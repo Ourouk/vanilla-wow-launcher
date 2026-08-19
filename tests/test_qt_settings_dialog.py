@@ -96,7 +96,6 @@ def test_gear_opens_settings_dialog(qapp, window):
         "settingsLogs",
         "settingsKoFi",
         "settingsBmc",
-        "settingsClose",
         "settingsClientUpdate",
     ):
         assert dialog.findChild(QWidget, name) is not None
@@ -354,7 +353,7 @@ def test_toggle_clear_wdb_calls_set_clear_wdb(qapp, window, monkeypatch):
 def test_close_works_headlessly(qapp, window):
     dialog = _open(window)
     assert dialog.isVisible()
-    QTest.mouseClick(dialog.findChild(QWidget, "settingsClose"), Qt.LeftButton)
+    dialog.close()
     QTest.qWait(20)
     assert not dialog.isVisible()
     # Reopening via the gear reuses the same (hidden) dialog instance.

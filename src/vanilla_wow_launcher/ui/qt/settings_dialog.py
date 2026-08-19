@@ -156,18 +156,6 @@ class SettingsDialog(QDialog):
         )
         layout.addWidget(title)
         layout.addStretch(1)
-
-        close_btn = QToolButton(hdr)
-        close_btn.setObjectName("settingsClose")
-        close_btn.setText("✕")
-        close_btn.setToolTip("Close settings")
-        close_btn.setCursor(Qt.PointingHandCursor)
-        close_btn.setStyleSheet(
-            f"QToolButton {{ color: {p.text_dim.name()}; font-size: 12pt; }}"
-            f"QToolButton:hover {{ color: {p.gold.name()}; }}"
-        )
-        close_btn.clicked.connect(self.close)
-        layout.addWidget(close_btn)
         return hdr
 
     def _build_divider(self) -> QFrame:

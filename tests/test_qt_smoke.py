@@ -23,7 +23,7 @@ from unittest.mock import Mock
 
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QLabel, QWidget
+from PySide6.QtWidgets import QLabel
 
 import vanilla_wow_launcher.controllers.news as news_controller
 import vanilla_wow_launcher.controllers.settings as settings_controller
@@ -379,7 +379,7 @@ def test_settings_dialog_opens_from_gear_and_closes(qapp, app_no_startup):
     assert dialog.isVisible()
     assert dialog.windowTitle() == "Settings"
 
-    QTest.mouseClick(dialog.findChild(QWidget, "settingsClose"), Qt.LeftButton)
+    dialog.close()
     QTest.qWait(50)
     assert not dialog.isVisible()
 
