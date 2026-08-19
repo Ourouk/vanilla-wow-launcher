@@ -2398,7 +2398,7 @@ def test_verifier_progress_reports_piece_counts(tmp_path, monkeypatch):
     # stays empty during an offline recheck, so the numerator must come from
     # status.progress, not verified_pieces).
     nums = [d["verified_pieces"] for d in updates]
-    assert max(nums) == 3
+    assert max(nums) == 4
     assert min(nums) >= 1
 
 
@@ -2532,12 +2532,15 @@ def test_verifier_does_not_stall_when_verified_pieces_unpopulated(
     v = td.TorrentVerifier(str(client), queue.Queue(), prog_q)
     stale = v.verify("https://srv.example/client.torrent")
     assert stale == []
-    updates = [
-        it[2]
+    verifying_items = [
+        it
         for it in list(prog_q.queue)
         if len(it) == 3 and it[2].get("phase") == "Verifying"
     ]
-    assert updates
-    nums = [d["verified_pieces"] for d in updates]
+    assert verifying_items
+    nums = [d[2]["verified_pieces"] for d in verifying_items]
     assert max(nums) >= 3
     assert min(nums) >= 1
+    # Regression: the verify progress must reach 100% (value 1.0) when the
+    # recheck finishes — the label must not freeze below completion.
+    assert verifying_items[-1][0] == 1.0

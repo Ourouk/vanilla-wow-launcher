@@ -78,16 +78,16 @@ class ModsController:
 
         def worker():
             latest = {}
-            if (
-                config_store.load_config().get("mods_catalog_cache") or {}
-            ).get("catalog") is None:
-                # Never cached: fetch once so the tab isn't empty.
+            # Always re-fetch the catalog on startup so newly-added entries
+            # surface without a manual Settings → Reload. Falls back to the
+            # cached copy (or an empty list) when the network is unavailable.
+            try:
+                registry = mods.mods_registry(force=True)
+            except Exception:
                 try:
-                    registry = mods.mods_registry(force=True)
+                    registry = mods.mods_registry() or []
                 except Exception:
                     registry = []
-            else:
-                registry = mods.mods_registry()
             for mod in registry:
                 try:
                     v = mods.fetch_mod_latest_version_cached(mod)

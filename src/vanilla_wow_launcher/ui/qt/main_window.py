@@ -796,7 +796,7 @@ class MainWindow(QMainWindow):
         # Verify unconditionally so a first-launch user with an
         # uninitialized config still sees the catalog list (the verify TTL
         # skips redundant rescans on later launches).
-        self._after(1500, hub.addons.verify)
+        self._after(1500, lambda: hub.addons.verify(force=True))
         self._after(2000, hub.updater.check_updater_update)
 
     def _after(self, ms: int, callback):

@@ -159,7 +159,7 @@ def test_load_latest_versions_fetches_catalog_on_first_launch(
     assert calls.count({"force": True}) == 1
 
 
-def test_load_latest_versions_uses_cache_without_fetching(
+def test_load_latest_versions_refetches_catalog_when_cached(
     controller, monkeypatch, cfg, versions
 ):
     cfg["mods_catalog_cache"] = {"timestamp": 0, "catalog": [{}]}
@@ -171,7 +171,9 @@ def test_load_latest_versions_uses_cache_without_fetching(
     )
     controller.load_latest_versions()
     _drain_for(controller._dispatcher, lambda e: isinstance(e, ModsLoaded))
-    assert calls == [{}, {}]
+    # Startup now always force-refreshes the catalog, even when a cache exists.
+    assert calls[0] == {"force": True}
+    assert calls.count({"force": True}) == 1
 
 
 def test_load_latest_versions_offline_first_launch_stays_empty(

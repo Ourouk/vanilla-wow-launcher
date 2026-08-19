@@ -632,10 +632,30 @@ class TorrentVerifier:
             elif seen_checking:
                 # Recheck has left the checking states -> it is done. have_piece()
                 # (used by _stale_files) is authoritative for the verdict, so we
-                # don't require a non-zero count here.
+                # don't require a non-zero count here. Emit a final 100% so the
+                # progress label doesn't freeze below completion.
+                self.progress(
+                    1.0,
+                    f"Verifying client against torrent…  {total_pieces} / "
+                    f"{total_pieces} pieces",
+                    phase="Verifying",
+                    transport="BitTorrent",
+                    verified_pieces=total_pieces,
+                    total_pieces=total_pieces,
+                )
                 return
             if total_pieces and done >= total_pieces:
                 # All pieces present (verified or assumed): recheck finished.
+                # Emit a final 100% before returning so the bar reaches 100%.
+                self.progress(
+                    1.0,
+                    f"Verifying client against torrent…  {total_pieces} / "
+                    f"{total_pieces} pieces",
+                    phase="Verifying",
+                    transport="BitTorrent",
+                    verified_pieces=total_pieces,
+                    total_pieces=total_pieces,
+                )
                 return
             if done != last_checked:
                 last_checked = done
