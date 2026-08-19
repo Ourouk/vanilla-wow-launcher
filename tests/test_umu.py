@@ -84,7 +84,52 @@ def test_resolve_proton_exact_match_wins(monkeypatch, tmp_path):
     assert umu.resolve_proton("GE-Proton9-5") == str(root / "GE-Proton9-5")
 
 
-# ── compute_wine_prefix ─────────────────────────────────────────────────
+# ── list_protons / default_proton / available_protons ──────────────────
+
+
+def test_list_protons_newest_first(monkeypatch, tmp_path):
+    root = tmp_path / "compat-tools"
+    for name in ("GE-Proton9-4", "GE-Proton9-18", "UMU-Proton-9-17"):
+        (root / name).mkdir()
+    found = umu.list_protons()
+    assert found[0] == "GE-Proton9-18"
+    assert set(found) == {
+        "GE-Proton9-4",
+        "GE-Proton9-18",
+        "UMU-Proton-9-17",
+    }
+
+
+def test_list_protons_dedupes_and_ignores_files(monkeypatch, tmp_path):
+    root = tmp_path / "compat-tools"
+    (root / "GE-Proton9-4").mkdir()
+    (root / "not-a-proton.txt").write_text("x")
+    assert umu.list_protons() == ["GE-Proton9-4"]
+
+
+def test_default_proton_prefers_newest_build(monkeypatch, tmp_path):
+    root = tmp_path / "compat-tools"
+    (root / "GE-Proton9-4").mkdir()
+    (root / "UMU-Proton-9-17").mkdir()
+    assert umu.default_proton() == "UMU-Proton-9-17"
+
+
+def test_default_proton_falls_back_to_umu_codename(monkeypatch, tmp_path):
+    assert umu.default_proton() == "UMU-Proton"
+
+
+def test_available_protons_includes_codenames(monkeypatch, tmp_path):
+    root = tmp_path / "compat-tools"
+    (root / "GE-Proton9-4").mkdir()
+    result = umu.available_protons()
+    assert "GE-Proton9-4" in result
+    for codename in umu.PROTON_CODENAMES:
+        assert codename in result
+    # A build and a codename for the same family aren't duplicated.
+    assert result.count("GE-Proton") == 1
+
+
+# ── compute_wine_prefix ───────────────────────────────────────────────
 
 
 def test_compute_wine_prefix_under_data_dir(tmp_path):
@@ -111,6 +156,49 @@ def test_build_env_resolves_proton_codename(monkeypatch, tmp_path):
     (root / "GE-Proton9-4").mkdir()
     env = umu.build_env("GE-Proton", "id")
     assert env["PROTONPATH"] == str(root / "GE-Proton9-4")
+
+
+def test_build_env_dxvk_d3d8_renderer(monkeypatch, tmp_path):
+    env = umu.build_env("UMU-Proton", "id", renderer="dxvk-d3d8")
+    assert env.get("PROTON_DXVK_D3D8") == "1"
+    assert "PROTON_USE_WINED3D" not in env
+
+
+def test_build_env_wined3d_opengl_renderer(monkeypatch, tmp_path):
+    env = umu.build_env("UMU-Proton", "id", renderer="wined3d-opengl")
+    assert env.get("PROTON_USE_WINED3D") == "1"
+    assert "PROTON_DXVK_D3D8" not in env
+
+
+def test_build_env_auto_renderer_sets_no_override(monkeypatch, tmp_path):
+    env = umu.build_env("UMU-Proton", "id", renderer="auto")
+    assert "PROTON_DXVK_D3D8" not in env
+    assert "PROTON_USE_WINED3D" not in env
+
+
+# ── launch renderer env ───────────────────────────────────────────────
+
+
+def test_launch_passes_renderer_env(monkeypatch, tmp_path):
+    game = tmp_path / "game"
+    game.mkdir()
+    exe = game / "WoW.exe"
+    exe.write_text("")
+    popen = mock.Mock()
+    popen.return_value.pid = 7
+    monkeypatch.setattr(umu.subprocess, "Popen", popen)
+    monkeypatch.setattr(umu.os, "getpgid", lambda pid: 7)
+    monkeypatch.setattr(umu, "find_umu", lambda: "/usr/bin/umu-run")
+
+    umu.launch(
+        str(game),
+        str(exe),
+        proton="UMU-Proton",
+        renderer="wined3d-opengl",
+    )
+
+    _, kwargs = popen.call_args
+    assert kwargs["env"]["PROTON_USE_WINED3D"] == "1"
 
 
 # ── launch ──────────────────────────────────────────────────────────────
@@ -239,3 +327,86 @@ def test_kill_game_noop_off_linux(monkeypatch):
     umu.kill_game(4242, 9999)
 
     assert killed == []
+
+
+# ── Linux feature detection ─────────────────────────────────────────────
+
+
+def test_find_gamemoderun_probes_path(monkeypatch):
+    monkeypatch.setattr(
+        umu.shutil, "which", lambda name: "/usr/bin/gamemoderun"
+    )
+    assert umu.find_gamemoderun() == "/usr/bin/gamemoderun"
+    monkeypatch.setattr(umu.shutil, "which", lambda name: "")
+    assert umu.find_gamemoderun() == ""
+
+
+def test_is_wayland_session_reads_env(monkeypatch):
+    monkeypatch.setenv("XDG_SESSION_TYPE", "wayland")
+    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+    assert umu.is_wayland_session() is True
+    monkeypatch.delenv("XDG_SESSION_TYPE", raising=False)
+    monkeypatch.setenv("WAYLAND_DISPLAY", ":0")
+    assert umu.is_wayland_session() is True
+    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+    monkeypatch.setenv("XDG_SESSION_TYPE", "x11")
+    assert umu.is_wayland_session() is False
+
+
+def test_scan_linux_features(monkeypatch):
+    monkeypatch.setattr(
+        umu, "find_gamemoderun", lambda: "/usr/bin/gamemoderun"
+    )
+    monkeypatch.setattr(umu, "is_wayland_session", lambda: True)
+    assert umu.scan_linux_features() == {
+        "gamemode_available": True,
+        "wayland_session": True,
+    }
+
+
+# ── build_env / launch: Wayland + GameMode ─────────────────────────────
+
+
+def test_build_env_wayland_sets_proton_flag(monkeypatch, tmp_path):
+    env = umu.build_env("UMU-Proton", "id", wayland=True)
+    assert env.get("PROTON_ENABLE_WAYLAND") == "1"
+    env = umu.build_env("UMU-Proton", "id", wayland=False)
+    assert "PROTON_ENABLE_WAYLAND" not in env
+
+
+def test_launch_prepends_gamemoderun(monkeypatch, tmp_path):
+    game = tmp_path / "game"
+    game.mkdir()
+    exe = game / "WoW.exe"
+    exe.write_text("")
+    popen = mock.Mock()
+    popen.return_value.pid = 7
+    monkeypatch.setattr(umu.subprocess, "Popen", popen)
+    monkeypatch.setattr(umu.os, "getpgid", lambda pid: 7)
+    monkeypatch.setattr(umu, "find_umu", lambda: "/usr/bin/umu-run")
+    monkeypatch.setattr(
+        umu, "find_gamemoderun", lambda: "/usr/bin/gamemoderun"
+    )
+
+    umu.launch(str(game), str(exe), gamemode=True)
+
+    args, _ = popen.call_args
+    assert args[0] == ["/usr/bin/gamemoderun", "/usr/bin/umu-run", str(exe)]
+
+
+def test_launch_skips_gamemoderun_when_absent(monkeypatch, tmp_path):
+    game = tmp_path / "game"
+    game.mkdir()
+    exe = game / "WoW.exe"
+    exe.write_text("")
+    popen = mock.Mock()
+    popen.return_value.pid = 7
+    monkeypatch.setattr(umu.subprocess, "Popen", popen)
+    monkeypatch.setattr(umu.os, "getpgid", lambda pid: 7)
+    monkeypatch.setattr(umu, "find_umu", lambda: "/usr/bin/umu-run")
+    monkeypatch.setattr(umu, "find_gamemoderun", lambda: "")
+
+    umu.launch(str(game), str(exe), gamemode=True)
+
+    args, _ = popen.call_args
+    assert args[0] == ["/usr/bin/umu-run", str(exe)]

@@ -208,7 +208,8 @@ def test_launch_settings_defaults(cfg, fakes):
     c = SettingsController(
         fakes.dispatcher, fakes.updater, fakes.mods, fakes.addons, fakes.news
     )
-    assert c.launch.umu_proton == "GE-Proton"
+    assert c.launch.umu_proton == "UMU-Proton"
+    assert c.launch.umu_renderer == "auto"
     assert c.launch.umu_binary_path == ""
     assert c.launch.umu_game_id == "umu-vanilla-wow"
 
@@ -235,7 +236,7 @@ def test_set_umu_proton_persists(cfg, fakes):
     assert cfg["launch"]["umu_proton"] == "GE-Proton9-4"
     assert c.launch.umu_proton == "GE-Proton9-4"
     c.set_umu_proton("  ")
-    assert c.launch.umu_proton == "GE-Proton"
+    assert c.launch.umu_proton == "UMU-Proton"
 
 
 def test_set_umu_binary_path_persists(cfg, fakes):
@@ -258,6 +259,76 @@ def test_set_umu_game_id_persists(cfg, fakes):
     assert c.launch.umu_game_id == "umu-test"
     c.set_umu_game_id("  ")
     assert c.launch.umu_game_id == "umu-vanilla-wow"
+
+
+def test_set_umu_renderer_persists(cfg, fakes):
+    c = SettingsController(
+        fakes.dispatcher, fakes.updater, fakes.mods, fakes.addons, fakes.news
+    )
+    c.set_umu_renderer("wined3d-opengl")
+    assert cfg["launch"]["umu_renderer"] == "wined3d-opengl"
+    assert c.launch.umu_renderer == "wined3d-opengl"
+    c.set_umu_renderer("bogus")
+    assert c.launch.umu_renderer == "auto"
+    c.set_umu_renderer("  ")
+    assert c.launch.umu_renderer == "auto"
+
+
+def test_available_protons_includes_detected_builds(cfg, fakes, monkeypatch):
+    monkeypatch.setattr(
+        "vanilla_wow_launcher.services.umu.available_protons",
+        lambda: ["GE-Proton9-4", "UMU-Proton"],
+    )
+    c = SettingsController(
+        fakes.dispatcher, fakes.updater, fakes.mods, fakes.addons, fakes.news
+    )
+    assert c.available_protons() == ["GE-Proton9-4", "UMU-Proton"]
+
+
+def test_launch_settings_renderer_and_feature_defaults(cfg, fakes):
+    c = SettingsController(
+        fakes.dispatcher, fakes.updater, fakes.mods, fakes.addons, fakes.news
+    )
+    assert c.launch.umu_renderer == "auto"
+    assert c.launch.umu_gamemode is True
+    assert c.launch.umu_wayland is True
+
+
+def test_set_umu_gamemode_persists(cfg, fakes):
+    c = SettingsController(
+        fakes.dispatcher, fakes.updater, fakes.mods, fakes.addons, fakes.news
+    )
+    c.set_umu_gamemode(False)
+    assert cfg["launch"]["umu_gamemode"] is False
+    assert c.launch.umu_gamemode is False
+    c.set_umu_gamemode(True)
+    assert cfg["launch"]["umu_gamemode"] is True
+
+
+def test_set_umu_wayland_persists(cfg, fakes):
+    c = SettingsController(
+        fakes.dispatcher, fakes.updater, fakes.mods, fakes.addons, fakes.news
+    )
+    c.set_umu_wayland(False)
+    assert cfg["launch"]["umu_wayland"] is False
+    assert c.launch.umu_wayland is False
+    c.set_umu_wayland(True)
+    assert cfg["launch"]["umu_wayland"] is True
+
+
+def test_linux_features_delegates_to_umu(cfg, fakes, monkeypatch):
+    features = {
+        "gamemode_available": True,
+        "wayland_session": False,
+    }
+    monkeypatch.setattr(
+        "vanilla_wow_launcher.services.umu.scan_linux_features",
+        lambda: features,
+    )
+    c = SettingsController(
+        fakes.dispatcher, fakes.updater, fakes.mods, fakes.addons, fakes.news
+    )
+    assert c.linux_features() == features
 
 
 def test_resolve_umu_binary_prefers_override(cfg, fakes, monkeypatch):

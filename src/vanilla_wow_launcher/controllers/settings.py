@@ -299,15 +299,58 @@ class SettingsController:
         return find_umu()
 
     def set_umu_proton(self, name: str) -> dict:
-        """Persist the PROTONPATH value (a codename like GE-Proton, or a
-        path). An empty value resets to the default codename."""
+        """Persist the PROTONPATH value (a codename like UMU-Proton/GE-Proton,
+        or a path). An empty value resets to the default codename."""
         name = (name or "").strip()
         self._set_launch(
             lambda launch: launch.__setitem__(
-                "umu_proton", name or "GE-Proton"
+                "umu_proton", name or "UMU-Proton"
             )
         )
         return self.state.config
+
+    def set_umu_renderer(self, renderer: str) -> dict:
+        """Persist the renderer preset (one of the RENDERER_* values in
+        services/umu.py). Unknown values fall back to "auto"."""
+        from ..services.umu import DEFAULT_RENDERER, RENDERER_CHOICES
+
+        valid = {r for r, _ in RENDERER_CHOICES}
+        renderer = (renderer or "").strip()
+        if renderer not in valid:
+            renderer = DEFAULT_RENDERER
+        self._set_launch(
+            lambda launch: launch.__setitem__("umu_renderer", renderer)
+        )
+        return self.state.config
+
+    def set_umu_gamemode(self, enabled: bool) -> dict:
+        """Persist the GameMode toggle (wraps the launch in `gamemoderun`
+        when both enabled and GameMode is installed)."""
+        self._set_launch(
+            lambda launch: launch.__setitem__("umu_gamemode", bool(enabled))
+        )
+        return self.state.config
+
+    def set_umu_wayland(self, enabled: bool) -> dict:
+        """Persist the Proton/Wine Wayland-backend toggle."""
+        self._set_launch(
+            lambda launch: launch.__setitem__("umu_wayland", bool(enabled))
+        )
+        return self.state.config
+
+    def available_protons(self) -> list:
+        """Proton builds for the Settings selector (installed builds newest
+        first, then canonical codenames)."""
+        from ..services.umu import available_protons
+
+        return available_protons()
+
+    def linux_features(self) -> dict:
+        """Scan optional Linux gaming features (GameMode, Wayland) for the
+        Linux settings UI, so it can enable/disable the relevant toggles."""
+        from ..services.umu import scan_linux_features
+
+        return scan_linux_features()
 
     def set_umu_binary_path(self, path: str) -> dict:
         """Persist an explicit umu-run binary override; '' means auto-detect

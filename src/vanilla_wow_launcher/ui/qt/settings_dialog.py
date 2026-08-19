@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
 from ...controllers.settings import SettingsController
 from ...core import launcher, platform_support
 from .bridge import ControllerBridge
+from .linux_settings_dialog import LinuxSettingsDialog
 from .theme import Palette, theme_qss
 
 KO_FI_URL = "https://ko-fi.com/rebased"
@@ -123,6 +124,7 @@ class SettingsDialog(QDialog):
         super().__init__(parent)
         self._settings = settings
         self._palette = palette
+        self._linuxDialog = None
         p = palette
         self.setObjectName("settingsDialog")
         self.setWindowTitle("Settings")
@@ -374,7 +376,7 @@ class SettingsDialog(QDialog):
         )
 
         if platform_support.is_linux():
-            self._build_linux_section(rcol_layout)
+            self._build_linux_button(rcol_layout)
 
         cols.addWidget(lcol, 3)
         cols.addWidget(rcol, 2)
@@ -544,116 +546,34 @@ class SettingsDialog(QDialog):
 
     # ── Linux umu-launcher ────────────────────────────────────────────────
 
-    def _build_linux_section(self, layout):
-        """LINUX (UMU) section: the Proton path, the umu-run binary override
-        and the GAMEID used to launch WoW.exe under Proton via umu-launcher.
-        Only built on Linux; each field forwards into the settings
-        controller."""
+    def _build_linux_button(self, layout):
+        """On Linux, a single button that opens the separate Linux (UMU)
+        settings window holding every Linux play setting (Proton, renderer,
+        GameMode, Wayland, GAMEID, umu-run path)."""
         p = self._palette
-        launch = self._settings.launch
-
-        title = QLabel("LINUX (UMU)", self)
-        title.setObjectName("settingsLinuxTitle")
-        title.setStyleSheet(
-            f"color: {p.gold.name()}; font-weight: bold; font-size: 10pt;"
+        btn = QPushButton("Linux (UMU) Settings…", self)
+        btn.setObjectName("settingsLinuxButton")
+        btn.setCursor(Qt.PointingHandCursor)
+        btn.setStyleSheet(
+            f"QPushButton {{ color: {p.gold.name()}; font-size: 10pt; "
+            f"text-align: left; padding: 6px 10px; }}"
+            f"QPushButton:hover {{ color: {p.text.name()}; }}"
         )
-        layout.addWidget(title)
-        layout.addSpacing(2)
+        btn.clicked.connect(self._on_open_linux_settings)
+        layout.addWidget(btn)
 
-        umu_bin = self._settings.resolve_umu_binary()
-        hint = QLabel(
-            f"umu-run detected at: {umu_bin}"
-            if umu_bin
-            else "umu-run not found on PATH — install umu-launcher "
-            "(e.g. `pacman -S umu-launcher` / `apt install umu-launcher`) "
-            "to enable PLAY on Linux.",
-            self,
-        )
-        hint.setObjectName("settingsUmuHint")
-        hint.setWordWrap(True)
-        hint.setStyleSheet(f"color: {p.text_dim.name()}; font-size: 9pt;")
-        layout.addWidget(hint)
-        layout.addSpacing(2)
+    def _on_open_linux_settings(self):
+        if self._linuxDialog is None:
+            self._linuxDialog = LinuxSettingsDialog(
+                self._settings, self._palette, self
+            )
+            self._linuxDialog.finished.connect(self._on_linux_dialog_finished)
+        self._linuxDialog.show()
+        self._linuxDialog.raise_()
+        self._linuxDialog.activateWindow()
 
-        self._add_launch_field(
-            layout,
-            "Proton",
-            "settingsProton",
-            launch.umu_proton,
-            self._settings.set_umu_proton,
-            lambda: self._settings.launch.umu_proton,
-        )
-        self._add_launch_field(
-            layout,
-            "GAMEID",
-            "settingsUmuGameId",
-            launch.umu_game_id,
-            self._settings.set_umu_game_id,
-            lambda: self._settings.launch.umu_game_id,
-        )
-
-        bin_row = QHBoxLayout()
-        bin_name = QLabel("umu-run", self)
-        bin_name.setStyleSheet(
-            f"color: {p.text.name()}; font-weight: bold; font-size: 9pt;"
-        )
-        bin_name.setFixedWidth(64)
-        bin_row.addWidget(bin_name)
-        self._umu_bin_edit = QLineEdit(launch.umu_binary_path, self)
-        self._umu_bin_edit.setObjectName("settingsUmuPath")
-        self._umu_bin_edit.setPlaceholderText("auto-detect on PATH")
-        bin_row.addWidget(self._umu_bin_edit, 1)
-        browse = QPushButton("Browse…", self)
-        browse.setObjectName("settingsUmuBrowse")
-        browse.setCursor(Qt.PointingHandCursor)
-        browse.clicked.connect(self._on_umu_browse)
-        bin_row.addWidget(browse)
-        apply = QPushButton("Apply", self)
-        apply.setObjectName("settingsUmuPathApply")
-        apply.setCursor(Qt.PointingHandCursor)
-        apply.clicked.connect(self._on_umu_path_apply)
-        bin_row.addWidget(apply)
-        layout.addLayout(bin_row)
-
-    def _add_launch_field(
-        self, layout, label, object_name, value, on_apply, get_value
-    ):
-        p = self._palette
-        row = QHBoxLayout()
-        name = QLabel(label, self)
-        name.setStyleSheet(
-            f"color: {p.text.name()}; font-weight: bold; font-size: 9pt;"
-        )
-        name.setFixedWidth(64)
-        row.addWidget(name)
-        edit = QLineEdit(value, self)
-        edit.setObjectName(object_name)
-        row.addWidget(edit, 1)
-        apply = QPushButton("Apply", self)
-        apply.setObjectName(f"{object_name}Apply")
-        apply.setCursor(Qt.PointingHandCursor)
-        apply.clicked.connect(
-            lambda: self._on_apply_launch(edit, on_apply, get_value)
-        )
-        row.addWidget(apply)
-        layout.addLayout(row)
-        return edit
-
-    def _on_apply_launch(self, edit, on_apply, get_value):
-        on_apply(edit.text())
-        edit.setText(get_value())
-
-    def _on_umu_path_apply(self):
-        self._settings.set_umu_binary_path(self._umu_bin_edit.text())
-        self._umu_bin_edit.setText(self._settings.launch.umu_binary_path)
-
-    def _on_umu_browse(self):
-        chosen, _ = QFileDialog.getOpenFileName(
-            self, "Select umu-run binary", os.path.expanduser("~")
-        )
-        if chosen:
-            self._umu_bin_edit.setText(chosen)
-            self._settings.set_umu_binary_path(chosen)
+    def _on_linux_dialog_finished(self):
+        self._linuxDialog = None
 
     # ── actions ─────────────────────────────────────────────────────────────
 

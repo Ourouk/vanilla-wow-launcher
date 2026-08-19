@@ -77,3 +77,29 @@ def test_fov_default_for_display_matches_display():
     fov = tweaks.fov_default_for_display()
     assert isinstance(fov, int)
     assert 90 <= fov <= 180
+
+
+def _write_with_renderer(monkeypatch, tmp_path, renderer):
+    monkeypatch.setattr(
+        tweaks,
+        "load_config",
+        lambda: {"launch": {"umu_renderer": renderer}},
+    )
+    client = tmp_path / "client"
+    tweaks.write_config_wtf(str(client), tweaks.TWEAKS_DEFAULTS)
+    return (client / "WTF" / "Config.wtf").read_text(encoding="utf-8")
+
+
+def test_config_wtf_no_gxapi_when_auto(monkeypatch, tmp_path):
+    content = _write_with_renderer(monkeypatch, tmp_path, "auto")
+    assert "gxApi" not in content
+
+
+def test_config_wtf_gxapi_d3d8_for_dxvk(monkeypatch, tmp_path):
+    content = _write_with_renderer(monkeypatch, tmp_path, "dxvk-d3d8")
+    assert 'SET gxApi "d3d8"' in content
+
+
+def test_config_wtf_gxapi_opengl_for_wined3d(monkeypatch, tmp_path):
+    content = _write_with_renderer(monkeypatch, tmp_path, "wined3d-opengl")
+    assert 'SET gxApi "opengl"' in content

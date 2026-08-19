@@ -22,6 +22,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import (
     QCheckBox,
+    QDialog,
     QFileDialog,
     QLabel,
     QLineEdit,
@@ -489,85 +490,22 @@ def _linux_dialog(window, monkeypatch):
     return _open(window)
 
 
-def test_linux_section_present_on_linux(qapp, window, monkeypatch):
-    monkeypatch.setattr(
-        window._hub.settings, "resolve_umu_binary", lambda: "/usr/bin/umu-run"
-    )
+def test_linux_button_present_on_linux(qapp, window, monkeypatch):
     dialog = _linux_dialog(window, monkeypatch)
-    for name in (
-        "settingsLinuxTitle",
-        "settingsProton",
-        "settingsProtonApply",
-        "settingsUmuGameId",
-        "settingsUmuPath",
-        "settingsUmuBrowse",
-        "settingsUmuPathApply",
-        "settingsUmuHint",
-    ):
-        assert dialog.findChild(QWidget, name) is not None, name
+    assert dialog.findChild(QPushButton, "settingsLinuxButton") is not None
 
 
-def test_linux_section_absent_on_other_platforms(qapp, window, monkeypatch):
+def test_linux_button_absent_on_other_platforms(qapp, window, monkeypatch):
     monkeypatch.setattr(platform_support, "is_linux", lambda: False)
     dialog = _open(window)
-    assert dialog.findChild(QWidget, "settingsLinuxTitle") is None
+    assert dialog.findChild(QPushButton, "settingsLinuxButton") is None
 
 
-def test_umu_hint_reports_missing_binary(qapp, window, monkeypatch):
-    monkeypatch.setattr(window._hub.settings, "resolve_umu_binary", lambda: "")
-    dialog = _linux_dialog(window, monkeypatch)
-    assert "not found" in dialog.findChild(QLabel, "settingsUmuHint").text()
-
-
-def test_umu_proton_apply_calls_setter(qapp, window, monkeypatch):
-    hub = window._hub
-    set_proton = Mock()
-    monkeypatch.setattr(hub.settings, "set_umu_proton", set_proton)
-    dialog = _linux_dialog(window, monkeypatch)
-    edit = dialog.findChild(QLineEdit, "settingsProton")
-    edit.setText("GE-Proton9-4")
-    QTest.mouseClick(
-        dialog.findChild(QPushButton, "settingsProtonApply"), Qt.LeftButton
-    )
-    set_proton.assert_called_once_with("GE-Proton9-4")
-
-
-def test_umu_gameid_apply_calls_setter(qapp, window, monkeypatch):
-    hub = window._hub
-    set_gameid = Mock()
-    monkeypatch.setattr(hub.settings, "set_umu_game_id", set_gameid)
-    dialog = _linux_dialog(window, monkeypatch)
-    edit = dialog.findChild(QLineEdit, "settingsUmuGameId")
-    edit.setText("umu-custom")
-    QTest.mouseClick(
-        dialog.findChild(QPushButton, "settingsUmuGameIdApply"), Qt.LeftButton
-    )
-    set_gameid.assert_called_once_with("umu-custom")
-
-
-def test_umu_path_apply_calls_setter(qapp, window, monkeypatch):
-    hub = window._hub
-    set_path = Mock()
-    monkeypatch.setattr(hub.settings, "set_umu_binary_path", set_path)
-    dialog = _linux_dialog(window, monkeypatch)
-    edit = dialog.findChild(QLineEdit, "settingsUmuPath")
-    edit.setText("/opt/umu-run")
-    QTest.mouseClick(
-        dialog.findChild(QPushButton, "settingsUmuPathApply"), Qt.LeftButton
-    )
-    set_path.assert_called_once_with("/opt/umu-run")
-
-
-def test_umu_browse_sets_binary_path(qapp, window, monkeypatch, tmp_path):
-    hub = window._hub
-    set_path = Mock()
-    monkeypatch.setattr(hub.settings, "set_umu_binary_path", set_path)
-    chosen = str(tmp_path / "umu-run")
-    monkeypatch.setattr(
-        QFileDialog, "getOpenFileName", lambda *a, **k: (chosen, "")
-    )
+def test_linux_button_opens_separate_dialog(qapp, window, monkeypatch):
     dialog = _linux_dialog(window, monkeypatch)
     QTest.mouseClick(
-        dialog.findChild(QPushButton, "settingsUmuBrowse"), Qt.LeftButton
+        dialog.findChild(QPushButton, "settingsLinuxButton"), Qt.LeftButton
     )
-    set_path.assert_called_once_with(chosen)
+    linux = dialog.findChild(QDialog, "linuxSettingsDialog")
+    assert linux is not None
+    assert linux.isVisible()

@@ -22,12 +22,29 @@ import time
 from ..core import platform_support
 from ..core.log_sink import log
 
-# A valid umu codename that resolves to the newest installed GE-Proton.
-DEFAULT_PROTON = "GE-Proton"
+# A valid umu codename: umu-launcher uses UMU-Proton (its own, continuously
+# updated Proton build) unless the user picks a specific installed build.
+DEFAULT_PROTON = "UMU-Proton"
+# Canonical codenames surfaced in the Proton selector alongside any locally
+# installed builds discovered in the Steam compatibility-tools dirs.
+PROTON_CODENAMES = ("UMU-Proton", "GE-Proton", "Proton-Experimental", "Proton")
 # Not a real umu-database id — there is no Vanilla WoW entry — so it just
 # names the prefix/token and skips unrelated game fixes.
 DEFAULT_GAME_ID = "umu-vanilla-wow"
 DEFAULT_STORE = "none"
+
+# Renderer presets for the Vanilla-era (D3D8/OpenGL) client. Each maps to
+# Proton env vars set on the umu-run process and to a Config.wtf gxApi value
+# (written by services/tweaks.py). "auto" leaves Proton's defaults untouched.
+RENDERER_AUTO = "auto"
+RENDERER_DXVK_D3D8 = "dxvk-d3d8"
+RENDERER_WINED3D_OPENGL = "wined3d-opengl"
+RENDERER_CHOICES = (
+    (RENDERER_AUTO, "Auto (Proton default)"),
+    (RENDERER_DXVK_D3D8, "DXVK (D3D8)"),
+    (RENDERER_WINED3D_OPENGL, "WineD3D (OpenGL)"),
+)
+DEFAULT_RENDERER = RENDERER_AUTO
 
 _UMU_EXE = "umu-run"
 
@@ -55,6 +72,29 @@ def find_umu() -> str:
 def umu_available() -> bool:
     """Whether umu-run is callable (cheap PATH probe)."""
     return bool(find_umu())
+
+
+def find_gamemoderun() -> str:
+    """Locate the Feral GameMode wrapper ``gamemoderun`` on PATH. Returns ''
+    when GameMode isn't installed (the client can still launch without it)."""
+    return shutil.which("gamemoderun") or ""
+
+
+def is_wayland_session() -> bool:
+    """Whether the current desktop session is Wayland (so the Proton/Wine
+    Wayland backend is applicable)."""
+    return os.environ.get("XDG_SESSION_TYPE") == "wayland" or bool(
+        os.environ.get("WAYLAND_DISPLAY")
+    )
+
+
+def scan_linux_features() -> dict:
+    """Probe optional Linux gaming features the launcher can toggle. Cheap,
+    PATH/env based — safe to call when building the settings UI."""
+    return {
+        "gamemode_available": bool(find_gamemoderun()),
+        "wayland_session": is_wayland_session(),
+    }
 
 
 def _version_key(name: str) -> tuple:
@@ -97,6 +137,48 @@ def resolve_proton(name: str) -> str:
     return name
 
 
+def list_protons() -> list:
+    """All Proton builds found in the Steam compatibility-tools dirs, newest
+    first (by `_version_key`). Concrete directories only — the canonical
+    codenames are added separately by `default_proton`/`available_protons`."""
+    found = []
+    for base in _COMPAT_TOOLS_DIRS:
+        root = os.path.expanduser(base)
+        if not os.path.isdir(root):
+            continue
+        for d in os.listdir(root):
+            full = os.path.join(root, d)
+            if os.path.isdir(full):
+                found.append(d)
+    # De-duplicate (a build could appear in more than one compat dir) then
+    # sort newest-first.
+    return sorted(set(found), key=_version_key, reverse=True)
+
+
+def default_proton() -> str:
+    """The Proton to use when the user hasn't pinned one: the newest locally
+    installed build, else the `UMU-Proton` codename (which umu resolves to its
+    own latest download)."""
+    available = list_protons()
+    if available:
+        return available[0]
+    return DEFAULT_PROTON
+
+
+def available_protons() -> list:
+    """The Proton selector contents: any installed builds (newest first)
+    followed by the canonical codenames, de-duplicated and in a stable order
+    with the default (`UMU-Proton`) first when present."""
+    builds = list_protons()
+    seen = set(builds)
+    ordered = list(builds)
+    for codename in PROTON_CODENAMES:
+        if codename not in seen:
+            ordered.append(codename)
+            seen.add(codename)
+    return ordered
+
+
 def compute_wine_prefix() -> str:
     """The launcher-wide WINEPREFIX directory, created on demand.
 
@@ -109,14 +191,29 @@ def compute_wine_prefix() -> str:
     return prefix
 
 
-def build_env(proton: str, game_id: str, store: str = DEFAULT_STORE) -> dict:
+def build_env(
+    proton: str,
+    game_id: str,
+    store: str = DEFAULT_STORE,
+    renderer: str = DEFAULT_RENDERER,
+    wayland: bool = False,
+) -> dict:
     """The env-var contract umu expects, layered over the current process env
-    (WINEPREFIX, PROTONPATH, GAMEID, STORE)."""
+    (WINEPREFIX, PROTONPATH, GAMEID, STORE) plus renderer/backend-specific
+    Proton flags. `renderer` is one of `RENDERER_*`; only "auto" leaves
+    Proton's renderer defaults untouched. `wayland` enables the Proton/Wine
+    Wayland backend (a no-op on X11)."""
     env = dict(os.environ)
     env["WINEPREFIX"] = compute_wine_prefix()
     env["PROTONPATH"] = resolve_proton(proton)
     env["GAMEID"] = game_id
     env["STORE"] = store
+    if renderer == RENDERER_DXVK_D3D8:
+        env["PROTON_DXVK_D3D8"] = "1"
+    elif renderer == RENDERER_WINED3D_OPENGL:
+        env["PROTON_USE_WINED3D"] = "1"
+    if wayland:
+        env["PROTON_ENABLE_WAYLAND"] = "1"
     return env
 
 
@@ -128,14 +225,19 @@ def launch(
     game_id: str = DEFAULT_GAME_ID,
     store: str = DEFAULT_STORE,
     umu_binary: str = "",
+    renderer: str = DEFAULT_RENDERER,
+    gamemode: bool = False,
+    wayland: bool = False,
 ) -> tuple:
     """Launch `exe` (an absolute path to the client binary) via umu-run.
 
     Spawns umu detached (its own session, no controlling terminal) with the
-    env contract set, cwd set to `out_dir`. Returns ``(pid, pgid, proc)`` —
-    the umu-run PID, its POSIX process-group id (for killing the whole
-    tree), and the Popen handle (so the caller can wait() on it). Raises
-    when umu-run is missing or the spawn fails.
+    env contract set (including renderer/backend Proton flags), cwd set to
+    `out_dir`. When `gamemode` is set and GameMode is installed the wrapper is
+    prepended so the client runs under Feral GameMode. Returns
+    ``(pid, pgid, proc)`` — the umu-run PID, its POSIX process-group id (for
+    killing the whole tree), and the Popen handle (so the caller can wait()
+    on it). Raises when umu-run is missing or the spawn fails.
     """
     binary = umu_binary or find_umu()
     if not binary:
@@ -144,10 +246,15 @@ def launch(
             "umu-launcher` or `apt install umu-launcher`) to play on Linux."
         )
     exe = os.path.abspath(exe)
+    args = [binary, exe]
+    if gamemode:
+        gamemoderun = find_gamemoderun()
+        if gamemoderun:
+            args = [gamemoderun] + args
     proc = subprocess.Popen(
-        [binary, exe],
+        args,
         cwd=out_dir,
-        env=build_env(proton, game_id, store),
+        env=build_env(proton, game_id, store, renderer),
         start_new_session=True,
         close_fds=True,
     )

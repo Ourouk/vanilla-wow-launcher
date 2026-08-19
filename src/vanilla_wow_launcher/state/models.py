@@ -218,17 +218,23 @@ class SettingsState:
 class LaunchSettings:
     """Linux umu-launcher launch settings (the "launch" config key)."""
 
-    umu_proton: str = "GE-Proton"  # PROTONPATH value (codename or path)
+    umu_proton: str = "UMU-Proton"  # PROTONPATH value (codename or path)
     umu_binary_path: str = ""  # "" = auto-detect umu-run on PATH
     umu_game_id: str = "umu-vanilla-wow"
+    umu_renderer: str = "auto"  # one of RENDERER_* in services/umu.py
+    umu_gamemode: bool = True  # wrap the launch in Feral GameMode if installed
+    umu_wayland: bool = True  # enable the Proton/Wine Wayland backend
 
     @classmethod
     def from_config(cls, cfg: dict) -> "LaunchSettings":
         data = cfg.get("launch") or {}
         return cls(
-            umu_proton=data.get("umu_proton", "GE-Proton"),
+            umu_proton=data.get("umu_proton", "UMU-Proton"),
             umu_binary_path=data.get("umu_binary_path", ""),
             umu_game_id=data.get("umu_game_id", "umu-vanilla-wow"),
+            umu_renderer=data.get("umu_renderer", "auto"),
+            umu_gamemode=data.get("umu_gamemode", True),
+            umu_wayland=data.get("umu_wayland", True),
         )
 
 

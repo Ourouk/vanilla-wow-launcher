@@ -234,6 +234,16 @@ def write_config_wtf(client_dir: str, tweaks: dict | None = None):
     from ..core import launcher
 
     srv = launcher.realm() or _host_of(launcher.server_url()) or "localhost"
+    # The Linux renderer preset (set via the Settings LINUX (UMU) section)
+    # selects the client's graphics API. On non-Linux or "auto" we leave
+    # gxApi unset so Proton/WoW pick their default.
+    launch_cfg = (load_config() or {}).get("launch") or {}
+    renderer = launch_cfg.get("umu_renderer", "auto")
+    gx_api = ""
+    if renderer == "dxvk-d3d8":
+        gx_api = "d3d8"
+    elif renderer == "wined3d-opengl":
+        gx_api = "opengl"
     vars_ = {
         "realmList": srv,
         "patchList": srv,
@@ -304,6 +314,8 @@ def write_config_wtf(client_dir: str, tweaks: dict | None = None):
         "NP_ChatBubblesBattleground": 1,
         "ChatBubblesParty": 1,
     }
+    if gx_api:
+        vars_["gxApi"] = gx_api
     try:
         cfg_dir = os.path.join(client_dir, "WTF")
         ensure_dir(cfg_dir)

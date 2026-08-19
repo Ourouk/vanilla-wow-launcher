@@ -361,9 +361,12 @@ class UpdateController:
             pid, pgid, proc = umu.launch(
                 client_dir,
                 exe,
-                proton=launch_cfg.get("umu_proton", "GE-Proton"),
+                proton=launch_cfg.get("umu_proton") or umu.default_proton(),
                 game_id=launch_cfg.get("umu_game_id", "umu-vanilla-wow"),
                 umu_binary=launch_cfg.get("umu_binary_path", ""),
+                renderer=launch_cfg.get("umu_renderer", "auto"),
+                gamemode=launch_cfg.get("umu_gamemode", True),
+                wayland=launch_cfg.get("umu_wayland", True),
             )
             self.state.game_running = True
             self.state.game_pid = pid
