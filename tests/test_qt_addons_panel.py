@@ -345,6 +345,7 @@ def test_checkbox_uncheck_marks_for_removal(qapp, window, hub):
 
 
 def test_apply_visibility_follows_pending(qapp, window, hub):
+    window.switch_tab("ADDONS")
     _post(hub, _make_state(available=MIX_AVAILABLE))
     panel = _panel(window)
     apply_btn = panel.findChild(QPushButton, "addonsApply")
@@ -366,6 +367,7 @@ def test_apply_visibility_follows_pending(qapp, window, hub):
 
 
 def test_apply_button_calls_apply_pending(qapp, window, hub, monkeypatch):
+    window.switch_tab("ADDONS")
     _post(hub, _make_state(available=MIX_AVAILABLE))
     panel = _panel(window)
     apply_mock = Mock()

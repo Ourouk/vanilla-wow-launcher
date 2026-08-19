@@ -484,6 +484,10 @@ class AddonsPanel(ScrollListPanel):
 
     # ── event hooks ────────────────────────────────────────────────────────
 
+    def _after_loaded(self):
+        self._refresh_recommended_visibility()
+        self._refresh_apply_visibility()
+
     def _after_operation(self):
         self._set_running(False)
         self._refresh_footer()
