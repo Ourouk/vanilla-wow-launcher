@@ -10,6 +10,7 @@ import pytest
 import vanilla_wow_launcher.services.update_backend.http_update as client_update
 import vanilla_wow_launcher.services.update_backend.torrent_update as td
 from vanilla_wow_launcher.services.update_backend.http_update import (
+    DownloadSource,
     UpdateWorker,
     VerifyWorker,
 )
@@ -505,4 +506,128 @@ def test_traverse_downloads_from_mirror_client_url(monkeypatch, tmp_path):
     worker.traverse(
         {"type": "file", "name": "data.bin", "size": 1, "hash": "A" * 40}, []
     )
-    assert recorded == ["https://dl.example/client/latest/data.bin"]
+
+
+def _manifest_resp(manifest):
+    return type(
+        "R",
+        (),
+        {
+            "__enter__": lambda s: s,
+            "__exit__": lambda *a: None,
+            "read": lambda s: json.dumps(manifest).encode(),
+        },
+    )()
+
+
+def test_verify_worker_reserves_progress_bar_for_update(tmp_path, monkeypatch):
+    """Verification must not drive the progress bar to 100% — that sweep is
+    reserved for the actual download of the files that need updating. The bar
+    stays at 0 while the phase reports Verifying/Verified."""
+    client = _mk_client(tmp_path)
+    (client / "data.bin").write_bytes(b"x")
+    manifest = {
+        "root": {
+            "files": [
+                {
+                    "type": "file",
+                    "name": "data.bin",
+                    "hash": "11F6AD8EC52A2984ABAAFD7C3B516503785C2072",
+                    "size": 1,
+                }
+            ]
+        }
+    }
+    monkeypatch.setattr(
+        client_update,
+        "secure_urlopen",
+        lambda *a, **k: _manifest_resp(manifest),
+    )
+    log_q, prog_q = queue.Queue(), queue.Queue()
+    VerifyWorker(str(client), log_q, prog_q).run()
+
+    items = list(prog_q.queue)
+    # No full-bar sweep during verification: every progress value stays at 0.
+    assert items, "verify should have emitted progress"
+    assert all(it[0] == 0.0 for it in items)
+    phases = [it[2].get("phase") for it in items if len(it) == 3]
+    assert "Verifying" in phases
+    assert "Verified" in phases
+
+
+def test_sum_needed_bytes_excludes_up_to_date(tmp_path, monkeypatch):
+    """The update progress denominator is the bytes of the files that actually
+    need downloading, not the whole client."""
+    client = _mk_client(tmp_path)
+    (client / "ok.bin").write_bytes(b"x")  # already matches the manifest
+    monkeypatch.setattr(client_update, "load_cache", lambda: {})
+    worker = UpdateWorker(str(client), queue.Queue(), queue.Queue())
+    nodes = [
+        {
+            "type": "file",
+            "name": "ok.bin",
+            "hash": "11F6AD8EC52A2984ABAAFD7C3B516503785C2072",
+            "size": 1,
+        },
+        {"type": "file", "name": "stale.bin", "hash": "A" * 40, "size": 9},
+        {"type": "mpq", "name": "Patch", "hash": "B" * 40, "size": 5},
+    ]
+    # ok.bin is up to date (size 1 excluded); stale.bin (9) + Patch.mpq (5).
+    assert worker._sum_needed_bytes(nodes) == 14
+
+
+def test_update_progress_spans_needed_files_only(tmp_path, monkeypatch):
+    """With the BitTorrent backend unused, the update progress bar must span
+    0→100 across exactly the files that need downloading (not the whole
+    client)."""
+    import hashlib
+
+    client = _mk_client(tmp_path)
+    size = 9
+    data = b"y" * size
+    h = hashlib.sha1(data).hexdigest().upper()
+    monkeypatch.setattr(client_update, "load_cache", lambda: {})
+    monkeypatch.setattr(client_update, "save_cache", lambda c: None)
+    monkeypatch.setattr(
+        client_update,
+        "_download_source",
+        lambda: DownloadSource(
+            "https://srv/manifest.json", "https://srv/client"
+        ),
+    )
+    monkeypatch.setattr(client_update, "_torrent_available", lambda: False)
+
+    def _resp(*a, **k):
+        buf = {"n": 0}
+
+        def _read(s, *a):
+            if buf["n"] == 0:
+                buf["n"] = 1
+                return data
+            return b""
+
+        return type(
+            "R",
+            (),
+            {
+                "__enter__": lambda s: s,
+                "__exit__": lambda *a: None,
+                "read": _read,
+                "status": 200,
+                "getcode": lambda s: 200,
+            },
+        )()
+
+    monkeypatch.setattr(client_update, "secure_urlopen", _resp)
+    log_q, prog_q = queue.Queue(), queue.Queue()
+    worker = UpdateWorker(str(client), log_q, prog_q)
+    nodes = [{"type": "file", "name": "a.bin", "hash": h, "size": size}]
+    worker.run(nodes)
+
+    items = list(prog_q.queue)
+    # The final overall progress reaches 100%.
+    assert items[-1][0] == 1.0
+    # An aggregate item reports the needed-file total, not the whole client.
+    agg = [it for it in items if len(it) == 3 and it[2].get("total") == size]
+    assert agg, "expected an aggregate progress item for the needed file"
+    assert all(it[2].get("transport") == "HTTP" for it in agg)

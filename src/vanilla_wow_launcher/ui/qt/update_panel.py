@@ -133,7 +133,9 @@ class UpdatePanel(QWidget):
         if text in ("Verifying…", "Updating…"):
             self._phase.setText(text)
             self._file.setText("Preparing client update…")
-            self._file_list.clear()
+            # Keep the needed-files list populated across the verify→update
+            # sequence: a torrent download reports no per-file paths, so
+            # clearing here would leave the list empty for the whole update.
 
     def operation_finished(self, kind: str, ok: bool, message: str):
         if kind in ("update", "verify", "full_update"):

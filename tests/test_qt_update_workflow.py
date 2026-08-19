@@ -470,7 +470,7 @@ def test_update_files_list_populates_and_progress_marks_done(qapp, window):
     assert "Data/other.mpq" in texts
 
 
-def test_update_files_list_cleared_on_new_operation(qapp, window):
+def test_update_files_list_persists_through_update(qapp, window):
     hub = window._hub
     panel = window._stack.widget(window._pages["UPDATE"])
 
@@ -478,9 +478,21 @@ def test_update_files_list_cleared_on_new_operation(qapp, window):
     QTest.qWait(150)
     assert panel._file_list.count() == 1
 
+    # The needed-files list must stay visible while the actual update runs (a
+    # torrent download reports no per-file paths to re-add), so it is not
+    # cleared when the operation moves from verifying to updating.
     hub.dispatcher.post(StatusChanged("Updating…"))
     QTest.qWait(150)
-    assert panel._file_list.count() == 0
+    assert panel._file_list.count() == 1
+
+    # A fresh list of needed files replaces it.
+    hub.dispatcher.post(UpdateFilesList(["Data/bar.mpq"]))
+    QTest.qWait(150)
+    texts = [
+        panel._file_list.item(i).text()
+        for i in range(panel._file_list.count())
+    ]
+    assert texts == ["Data/bar.mpq"]
 
 
 # ── informative fields (Method / Progress / Speed / Peers) ──────────────────

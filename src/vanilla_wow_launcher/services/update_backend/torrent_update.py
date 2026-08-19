@@ -44,8 +44,12 @@ DHT_BOOTSTRAP_NODES = (
 # ports if needed. The default is empty to let the OS pick.
 LISTEN_INTERFACES = "0.0.0.0:0"
 ALERT_POLL_MS = 250
-# Minimal upload rate (1 B/s) — libtorrent treats 0 as unlimited, not disabled.
-UPLOAD_RATE_LIMIT = 1
+# upload_rate_limit is in bytes/sec; 0 (and -1) mean unlimited in libtorrent.
+# A near-zero value (e.g. 1) starves upload, so peers choke the client under
+# BitTorrent's tit-for-tat and the download hangs at 0 B/s despite connected
+# peers. If a good-citizen cap is ever wanted, use a real bytes/sec value
+# (KB/s * 1024, per Deluge's _on_set_max_upload_speed), never ~0.
+UPLOAD_RATE_LIMIT = -1
 # Alert categories we care about: error, storage (for failures), status (for
 # state changes), and tracker/DHT if we want more detail.
 ALERT_MASK = (
@@ -171,21 +175,6 @@ def _info_hash_hex(ti) -> str | None:
         return None
 
 
-def _atp_info_hash_hex(atp) -> str | None:
-    """Best-effort hex info-hash of an ``add_torrent_params`` (resume data)."""
-    ih = getattr(atp, "info_hashes", None)
-    if ih is None:
-        return None
-    for attr in ("v1", "v2"):
-        try:
-            value = str(getattr(ih, attr, None) or "")
-        except Exception:
-            continue
-        if value and value != "0" * len(value):
-            return value
-    return None
-
-
 # ── torrent metadata persistence (identity + resume data) ──────────────────
 
 
@@ -217,14 +206,6 @@ def _atomic_write_bytes(path: str, data: bytes):
 
 def write_torrent_atomically(info_hash: str, data: bytes):
     _atomic_write_bytes(torrent_path(info_hash), data)
-
-
-def read_resume_bytes(info_hash: str) -> bytes | None:
-    try:
-        with open(resume_path(info_hash), "rb") as f:
-            return f.read()
-    except OSError:
-        return None
 
 
 def write_resume_bytes(info_hash: str, buf: bytes):
@@ -753,84 +734,11 @@ class TorrentDownloader:
                 "enable_dht": True,
                 "dht_bootstrap_nodes": DHT_BOOTSTRAP_NODES,
                 "enable_lsd": False,
-                "enable_upnp": False,
-                "enable_natpmp": False,
+                "enable_upnp": True,
+                "enable_natpmp": True,
                 "alert_mask": ALERT_MASK,
             }
         )
-
-    def _load_resume(self, atp, snapshot: TorrentSnapshot):
-        """Merge cached resume data into ``atp`` when it matches the
-        snapshot's info hash. Resume data is best-effort: unreadable or
-        identity-mismatched files are discarded without failing the download,
-        so the next run resumes fresh instead of trusting stale state.
-
-        Only verified-piece state is carried over — ``add_torrent_params.file_sizes``
-        is ignored by libtorrent whenever ``atp.ti`` is set (which is always the
-        case here), so it is not restored. The file selection always comes from
-        the current ``wanted`` set (``_priorities()``), never from cached resume
-        data."""
-        info_hash = snapshot.info_hash
-        if not info_hash:
-            return
-        buf = read_resume_bytes(info_hash)
-        if not buf:
-            return
-        import libtorrent as lt
-
-        try:
-            read_resume_data = getattr(lt, "read_resume_data", None)
-            if read_resume_data is None:
-                return
-            resume = read_resume_data(buf)
-            resume_hash = _atp_info_hash_hex(resume)
-            if resume_hash and resume_hash != info_hash:
-                self.log(
-                    "[torrent] Resume data info hash mismatch — discarding.",
-                    "dim",
-                )
-                remove_resume_data(info_hash)
-                return
-            value = getattr(resume, "have_pieces", None)
-            if value is not None:
-                atp.have_pieces = value
-            self.log("[torrent] Resuming from cached resume data.", "dim")
-        except Exception as e:
-            self.log(f"[torrent] Resume data unreadable: {e}", "dim")
-            remove_resume_data(info_hash)
-
-    def _save_resume(self, ses, h, snapshot: TorrentSnapshot):
-        """Best-effort persistence of resume state before the torrent handle
-        is removed, so an interrupted download can resume pieces next run.
-        Never raises — a lost resume file only costs a recheck."""
-        info_hash = snapshot.info_hash
-        if not info_hash:
-            return
-        import libtorrent as lt
-
-        try:
-            h.save_resume_data()
-        except Exception:
-            return
-        write_resume_data_buf = getattr(lt, "write_resume_data_buf", None)
-        if write_resume_data_buf is None:
-            return
-        deadline = time.monotonic() + 5.0
-        while time.monotonic() < deadline:
-            for a in ses.pop_alerts():
-                if type(a).__name__ == "save_resume_data_alert":
-                    try:
-                        buf = write_resume_data_buf(a.params)
-                        write_resume_bytes(info_hash, buf)
-                        self.log("[torrent] Resume data saved.", "dim")
-                    except Exception as e:
-                        self.log(
-                            f"[torrent] Failed to save resume data: {e}", "dim"
-                        )
-                    return
-                if type(a).__name__ == "save_resume_data_failed_alert":
-                    return
-            ses.wait_for_alert(100)
 
     def download(self, torrent_url: str, wanted: set[str] | None) -> list[str]:
         """Download the wanted files from the torrent at ``torrent_url`` into
@@ -866,7 +774,6 @@ class TorrentDownloader:
             atp.ti = ti
             atp.save_path = self.out_dir
             atp.file_priorities = priorities
-            self._load_resume(atp, snapshot)
             files = ti.files()
             total_wanted = sum(
                 files.file_size(i)
@@ -880,6 +787,12 @@ class TorrentDownloader:
                 raise TorrentSessionError(
                     f"Failed to add torrent to session: {e}"
                 ) from e
+            # The binding adds the torrent paused; resume() starts it so it
+            # checks the on-disk files and then downloads only the wanted
+            # pieces (mirrors the verify path's force_recheck()+resume()).
+            # Resume data is intentionally not loaded, so libtorrent re-derives
+            # piece state from disk instead of trusting a possibly-stale cache.
+            h.resume()
             return self._pump(
                 ses,
                 h,
@@ -892,7 +805,6 @@ class TorrentDownloader:
             raise
         finally:
             if h is not None:
-                self._save_resume(ses, h, snapshot)
                 try:
                     h.pause()
                     ses.remove_torrent(h)
@@ -915,6 +827,12 @@ class TorrentDownloader:
         file list and priorities — they provide a stable denominator from the
         first poll iteration without waiting for libtorrent's status."""
         import libtorrent as lt
+
+        checking_states = {
+            lt.torrent_status.states.checking_files,
+            lt.torrent_status.states.checking_resume_data,
+            lt.torrent_status.states.queued_for_checking,
+        }
 
         last_wanted_done = 0
         last_move = time.monotonic()
@@ -957,6 +875,15 @@ class TorrentDownloader:
                 transfer_started = True
             # Reset stall timer when peers connect — the session is alive.
             if s.num_peers > 0:
+                last_move = time.monotonic()
+            # While libtorrent is hashing the on-disk files (the initial
+            # recheck that re-derives piece state now that resume data is not
+            # loaded), keep the stall timer alive so a slow multi-GB recheck
+            # can't exceed DISCOVERY_TIMEOUT and raise TorrentStalledError
+            # before any byte is downloaded. Mirrors _wait_for_recheck. Use
+            # getattr so a status object lacking `.state` (e.g. a bare fake)
+            # is treated as "not checking" rather than erroring.
+            if getattr(s, "state", None) in checking_states:
                 last_move = time.monotonic()
             if s.is_finished or (
                 total_wanted > 0 and wanted_done >= total_wanted

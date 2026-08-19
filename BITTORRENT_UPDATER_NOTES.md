@@ -103,9 +103,12 @@ Building the remap `file_storage` from *relative* paths produced garbage
 
 ### P5 — info_hash stability
 `remap_files` (P1) and `add_torrent_params.ti` do **not** change the info hash,
-so resume data cached by info hash stays valid across remaps. Always key resume
-data by info hash, and discard it when the cached info hash mismatches the
-current snapshot.
+so a snapshot's identity is stable across remaps. Resume data is **intentionally
+not** persisted between launches: instead of loading a cached `have_pieces`,
+`TorrentDownloader.download()` lets libtorrent re-derive piece state from the
+on-disk files on add (resume-on-add), which also preserves partial progress and
+avoids trusting a possibly-stale cache. If resume persistence is ever reinstated,
+key it by info hash and discard it on a mismatched snapshot.
 
 ### P6 — offline verification session
 ```python
@@ -136,8 +139,9 @@ is advisory; the manifest recheck is authoritative.
 
 ### P9 — snapshot identity
 A URL never stands in for identity. Persist `content_hash` + `info_hash` with the
-verdict; a different snapshot at the same URL must invalidate the cached verdict
-and discard its resume data ("Snapshot changed at URL").
+verdict; a different snapshot at the same URL must invalidate the cached verdict.
+Resume data is no longer persisted between launches (see P5), so there is no
+resume cache to discard — the on-disk recheck on add handles staleness.
 
 ## Testing strategy (so the bugs don't come back)
 

@@ -149,8 +149,9 @@ class VerifyWorker:
     def log(self, msg, tag=""):
         self.log_q.put((msg, tag))
 
-    def progress(self, value, label=""):
-        self.prog_q.put((value, label))
+    def progress(self, value, label="", **details):
+        item = (value, label, details) if details else (value, label)
+        self.prog_q.put(item)
 
     def _file_ok(self, dest, server_hash):
         if not os.path.exists(dest):
@@ -194,7 +195,7 @@ class VerifyWorker:
     def run(self):
         manifest_ok = False
         try:
-            self.progress(0.02, "Fetching manifest...")
+            self.progress(0.0, "Verifying…", phase="Verifying")
             self.log("Verifying files...", "acct")
             src = _download_source()
             if src is None:
@@ -206,7 +207,7 @@ class VerifyWorker:
                 manifest = json.load(r)
             manifest_ok = True
             self.log_q.put(("__MANIFEST_AVAILABLE__", ""))
-            self.progress(0.5, "Checking...")
+            self.progress(0.0, "Verifying…", phase="Verifying")
 
             stale_nodes = [
                 c
@@ -214,7 +215,10 @@ class VerifyWorker:
                 if (c := self._traverse(child, [])) is not None
             ]
 
-            self.progress(1.0, "")
+            # The bar is reserved for the actual download of the files that
+            # need updating; verification only reports its phase, never a 0→100
+            # sweep over the whole client.
+            self.progress(0.0, "", phase="Verified")
             save_cache(self._cache)
 
             # Config.wtf isn't part of the manifest — it's user game config.
@@ -479,6 +483,15 @@ class UpdateWorker:
         self._cancel = False
         self._cache: dict = load_cache()
         self._source: DownloadSource | None = None
+        # Total bytes of the files that actually need downloading, and how many
+        # have been fetched so far. The update progress bar spans 0→100 across
+        # exactly these (the files that need updating), not the whole client.
+        self._total = 0
+        self._downloaded = 0
+        # Bytes already counted toward ``_downloaded`` per destination, so a
+        # hash-mismatch retry (which re-downloads the same file) isn't double
+        # counted.
+        self._counted: dict = {}
 
     def cancel(self):
         self._cancel = True
@@ -555,19 +568,37 @@ class UpdateWorker:
                                 )
                                 t0, bytes_at_t0 = now, downloaded
                             if size:
-                                self.progress(
-                                    downloaded / size,
-                                    f"{name}   •   {fmt_size(downloaded)}"
-                                    f" / {total_str}{speed_str}",
-                                    phase="Downloading",
-                                    transport="HTTP",
-                                    current_file=name,
-                                    downloaded=downloaded,
-                                    total=size,
-                                    speed=(downloaded - bytes_at_t0) / dt
-                                    if dt > 0
-                                    else 0.0,
-                                )
+                                if self._total:
+                                    agg = self._downloaded + downloaded
+                                    self.progress(
+                                        agg / self._total,
+                                        f"{name}   •   "
+                                        f"{fmt_size(downloaded)}"
+                                        f" / {total_str}{speed_str}",
+                                        phase="Downloading",
+                                        transport="HTTP",
+                                        current_file=name,
+                                        downloaded=agg,
+                                        total=self._total,
+                                        speed=(downloaded - bytes_at_t0) / dt
+                                        if dt > 0
+                                        else 0.0,
+                                    )
+                                else:
+                                    self.progress(
+                                        downloaded / size,
+                                        f"{name}   •   "
+                                        f"{fmt_size(downloaded)}"
+                                        f" / {total_str}{speed_str}",
+                                        phase="Downloading",
+                                        transport="HTTP",
+                                        current_file=name,
+                                        downloaded=downloaded,
+                                        total=size,
+                                        speed=(downloaded - bytes_at_t0) / dt
+                                        if dt > 0
+                                        else 0.0,
+                                    )
 
                 # A dropped connection looks like a clean EOF — never accept
                 # a short file as a finished download.
@@ -578,6 +609,18 @@ class UpdateWorker:
                     )
 
                 shutil.move(tmp, dest)
+                if self._total:
+                    prev = self._counted.get(dest, 0)
+                    self._counted[dest] = size
+                    self._downloaded += size - prev
+                    self.progress(
+                        min(1.0, self._downloaded / self._total),
+                        "Downloading…",
+                        phase="Downloading",
+                        transport="HTTP",
+                        downloaded=self._downloaded,
+                        total=self._total,
+                    )
                 if hasher is not None:
                     digest = hasher.hexdigest().upper()
                     try:
@@ -623,8 +666,12 @@ class UpdateWorker:
     def _torrent_download(self, nodes) -> bool:
         """Bulk-download the stale files via BitTorrent when the active source
         advertises a ``torrent_url`` and libtorrent is available. Returns True
-        when the torrent backend ran; ``traverse()`` still re-verifies every
-        file afterwards and HTTP-resumes anything the torrent didn't cover."""
+        when the torrent backend ran. The caller then skips ``traverse()``'s
+        per-file HTTP re-verify (the torrent's piece verification already
+        covers the files). Returns False when the torrent backend was not used
+        (no ``torrent_url``, libtorrent missing, or the download failed), in
+        which case the caller falls back to ``traverse()`` for HTTP downloads
+        with manifest re-verification."""
         src = self._source
         if src is None or not src.torrent_url:
             return False
@@ -677,6 +724,37 @@ class UpdateWorker:
             dest = os.path.join(self.out_dir, rel)
             if not self._skip_download(node, dest):
                 wanted.add(rel)
+
+    def _sum_needed_bytes(self, nodes) -> int:
+        """Total bytes of the files that actually need downloading (those not
+        already matching the manifest), so the update progress bar can span
+        0→100 across exactly the files that need updating — not the whole
+        client."""
+        total = 0
+
+        def walk(node, path_parts):
+            nonlocal total
+            if self._cancel:
+                return
+            t = node["type"]
+            cur = path_parts + [node["name"]]
+            if t == "dir":
+                for child in node.get("files", []):
+                    walk(child, cur)
+            elif t == "file":
+                dest = os.path.join(self.out_dir, os.path.join(*cur))
+                if not self._skip_download(node, dest):
+                    total += node["size"]
+            elif t == "mpq":
+                dest = os.path.join(
+                    self.out_dir, os.path.join(*cur, node["name"] + ".mpq")
+                )
+                if not self._skip_download(node, dest):
+                    total += node["size"]
+
+        for n in nodes:
+            walk(n, [])
+        return total
 
     def traverse(self, node, path_parts):
 
@@ -958,9 +1036,16 @@ class UpdateWorker:
                 self._source = _download_source()
             if self._source is None:
                 raise RuntimeError("No download source configured.")
-            self._torrent_download(nodes)
-            for child in nodes:
-                self.traverse(child, [])
+            ran_torrent = self._torrent_download(nodes)
+            if not ran_torrent:
+                # The BitTorrent backend didn't fetch the files, so fall back
+                # to the per-file HTTP download (which re-verifies each file
+                # against the manifest). The update progress bar spans 0→100
+                # across exactly the files that need updating.
+                self._total = self._sum_needed_bytes(nodes)
+                self._downloaded = 0
+                for child in nodes:
+                    self.traverse(child, [])
 
             if self._cancel:
                 self.log("\nUpdate cancelled.", "err")

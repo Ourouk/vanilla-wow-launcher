@@ -10,6 +10,7 @@ import importlib.util
 import os
 import queue
 import sys
+import time
 import urllib.error
 from types import SimpleNamespace
 
@@ -359,6 +360,9 @@ def test_download_completes_and_sets_file_priorities(tmp_path, monkeypatch):
     assert ses.atp.save_path == str(client)
     # Only the stale file is wanted; the shared leading dir is stripped.
     assert ses.atp.file_priorities == [7, 0, 0]
+    # upload_rate_limit is in bytes/sec; 0/-1 = unlimited. A near-zero value
+    # starves upload and peers choke the client (download hangs at 0 B/s).
+    assert ses.settings["upload_rate_limit"] == -1
     assert len(ses.removed) == 1  # never seeded — removed after completion
 
 
@@ -992,6 +996,57 @@ def test_run_invokes_torrent_then_skips_covered_files(tmp_path, monkeypatch):
     msgs = [m[0] for m in log_q.queue]
     assert "__DONE__" in msgs
     assert "__ERROR__" not in msgs
+
+
+def test_run_skips_traverse_when_torrent_ran(tmp_path, monkeypatch):
+    """When the BitTorrent backend delivered the files, the per-file HTTP
+    re-verify (traverse) must be skipped — the torrent's piece verification
+    already covers them."""
+    client = _mk_client(tmp_path)
+    log_q, prog_q = queue.Queue(), queue.Queue()
+    worker = UpdateWorker(str(client), log_q, prog_q)
+    monkeypatch.setattr(
+        client_update,
+        "_download_source",
+        lambda: DownloadSource(
+            "https://srv/manifest.json",
+            "https://srv/client",
+            "https://srv/client.torrent",
+        ),
+    )
+    monkeypatch.setattr(client_update, "load_cache", lambda: {})
+    monkeypatch.setattr(client_update, "save_cache", lambda c: None)
+    traversed = []
+    monkeypatch.setattr(worker, "traverse", lambda node, _: traversed.append(node))
+    monkeypatch.setattr(worker, "_torrent_download", lambda nodes: True)
+    nodes = [{"type": "file", "name": "a.bin", "hash": "A" * 40, "size": 1}]
+    worker.run(nodes)
+    assert traversed == []
+
+
+def test_run_traverse_runs_when_torrent_unused(tmp_path, monkeypatch):
+    """When the BitTorrent backend was not used, the per-file HTTP download
+    (and its manifest re-verify) must still run."""
+    client = _mk_client(tmp_path)
+    log_q, prog_q = queue.Queue(), queue.Queue()
+    worker = UpdateWorker(str(client), log_q, prog_q)
+    monkeypatch.setattr(
+        client_update,
+        "_download_source",
+        lambda: DownloadSource(
+            "https://srv/manifest.json",
+            "https://srv/client",
+            "https://srv/client.torrent",
+        ),
+    )
+    monkeypatch.setattr(client_update, "load_cache", lambda: {})
+    monkeypatch.setattr(client_update, "save_cache", lambda c: None)
+    traversed = []
+    monkeypatch.setattr(worker, "traverse", lambda node, _: traversed.append(node))
+    monkeypatch.setattr(worker, "_torrent_download", lambda nodes: False)
+    nodes = [{"type": "file", "name": "a.bin", "hash": "A" * 40, "size": 1}]
+    worker.run(nodes)
+    assert traversed == nodes
 
 
 # ── manifest-less recovery ───────────────────────────────────────────────────
@@ -2019,6 +2074,7 @@ def _make_snapshot_fake_lt(
         def __init__(self):
             self.status_calls = 0
             self.resume_requested = False
+            self.resumed = False
 
         def status(self):
             self.status_calls += 1
@@ -2032,6 +2088,7 @@ def _make_snapshot_fake_lt(
 
         def resume(self):
             self.paused = False
+            self.resumed = True
 
         def save_resume_data(self):
             self.resume_requested = True
@@ -2050,7 +2107,8 @@ def _make_snapshot_fake_lt(
 
         def add_torrent(self, atp):
             self.atp = atp
-            return FakeHandle()
+            self.handle = FakeHandle()
+            return self.handle
 
         def pop_alerts(self):
             # The download pump drains alerts first; the save-resume alert is
@@ -2156,97 +2214,174 @@ def test_fetch_torrent_skips_persistence_without_info_hash(
     assert not torrents_dir.exists() or not list(torrents_dir.glob("*"))
 
 
-def test_downloader_loads_matching_resume_data(tmp_path, monkeypatch):
-    """Resume data whose info hash matches the snapshot is merged into the
-    add_torrent_params before the torrent is added."""
+def test_downloader_resumes_torrent_and_ignores_stale_cache(
+    tmp_path, monkeypatch
+):
+    """download() must resume the (paused-by-default) torrent so it actually
+    transfers, and must NOT load stale cached resume data — libtorrent
+    re-derives piece state from disk instead of trusting a possibly-stale
+    have_pieces cache."""
     client = _mk_client(tmp_path)
     cache_root = tmp_path / "cache"
     cache_root.mkdir()
     monkeypatch.setattr(td, "cache_dir", lambda: str(cache_root))
     info_hash = "aa" * 20
-    resume_atp = SimpleNamespace(
-        info_hashes=SimpleNamespace(v1=info_hash, v2=""),
-        have_pieces=[True, False, True],
-    )
-    fake = _install_snapshot_fake(
-        monkeypatch, info_hash=info_hash, resume_atp=resume_atp
-    )
-    td.write_resume_bytes(info_hash, b"resume")
-    log_q = queue.Queue()
-    d = td.TorrentDownloader(str(client), log_q, queue.Queue())
+    # A stale resume file from a prior run — must be ignored now.
+    td.write_resume_bytes(info_hash, b"stale")
+    fake = _install_snapshot_fake(monkeypatch, info_hash=info_hash)
+    d = td.TorrentDownloader(str(client), queue.Queue(), queue.Queue())
     d.download("https://srv.example/client.torrent", {"Data/a.bin"})
-    assert fake.last_session.atp.have_pieces == [True, False, True]
-    assert any("Resuming from cached resume data" in m[0] for m in log_q.queue)
+    assert fake.last_session.handle.resumed is True
+    assert not hasattr(fake.last_session.atp, "have_pieces")
+    # The stale resume file is left on disk (harmless) — not trusted, not
+    # removed.
+    assert (cache_root / "torrents" / f"{info_hash}.resume").exists()
 
 
-def test_downloader_resume_does_not_override_selection(tmp_path, monkeypatch):
-    """A cached resume's file_priorities never override the priorities
-    computed for the current wanted set; compatible piece state still merges."""
+def test_downloader_priorities_come_from_wanted_set(tmp_path, monkeypatch):
+    """The file selection (priorities) always reflects the current wanted set,
+    never any cached resume selection, and no have_pieces is merged."""
     client = _mk_client(tmp_path)
     cache_root = tmp_path / "cache"
     cache_root.mkdir()
     monkeypatch.setattr(td, "cache_dir", lambda: str(cache_root))
-    info_hash = "aa" * 20
-    resume_atp = SimpleNamespace(
-        info_hashes=SimpleNamespace(v1=info_hash, v2=""),
-        have_pieces=[True, False],
-        file_priorities=[0, 7],
-    )
-    fake = _install_snapshot_fake(
-        monkeypatch,
-        info_hash=info_hash,
-        resume_atp=resume_atp,
-        save_alert=True,
-    )
-    td.write_resume_bytes(info_hash, b"resume")
+    fake = _install_snapshot_fake(monkeypatch, info_hash="aa" * 20)
     d = td.TorrentDownloader(str(client), queue.Queue(), queue.Queue())
     d.download("https://srv.example/client.torrent", {"Data/a.bin"})
     assert fake.last_session.atp.file_priorities == [7, 0]
-    assert fake.last_session.atp.have_pieces == [True, False]
-
-
-def test_downloader_discards_mismatched_resume_data(tmp_path, monkeypatch):
-    """Resume data for a different info hash is removed and never merged."""
-    client = _mk_client(tmp_path)
-    cache_root = tmp_path / "cache"
-    cache_root.mkdir()
-    monkeypatch.setattr(td, "cache_dir", lambda: str(cache_root))
-    info_hash = "aa" * 20
-    resume_atp = SimpleNamespace(
-        info_hashes=SimpleNamespace(v1="ff" * 20, v2=""),
-        have_pieces=[True],
-    )
-    fake = _install_snapshot_fake(
-        monkeypatch, info_hash=info_hash, resume_atp=resume_atp
-    )
-    td.write_resume_bytes(info_hash, b"resume")
-    log_q = queue.Queue()
-    d = td.TorrentDownloader(str(client), log_q, queue.Queue())
-    d.download("https://srv.example/client.torrent", {"Data/a.bin"})
-    assert not os.path.exists(td.resume_path(info_hash))
     assert not hasattr(fake.last_session.atp, "have_pieces")
-    assert any("info hash mismatch" in m[0] for m in log_q.queue)
 
 
-def test_downloader_saves_resume_data_on_completion(tmp_path, monkeypatch):
-    """On a finished download the resume buffer is written before the handle
-    is removed, keyed by the snapshot's info hash."""
+def test_downloader_removes_handle_on_completion(tmp_path, monkeypatch):
+    """On a finished download the handle is removed (never seeded) and no
+    resume buffer is written — check state is not persisted between launches."""
     client = _mk_client(tmp_path)
     cache_root = tmp_path / "cache"
     cache_root.mkdir()
     monkeypatch.setattr(td, "cache_dir", lambda: str(cache_root))
     info_hash = "aa" * 20
-    fake = _install_snapshot_fake(
-        monkeypatch, info_hash=info_hash, save_alert=True
-    )
-    log_q = queue.Queue()
-    d = td.TorrentDownloader(str(client), log_q, queue.Queue())
+    fake = _install_snapshot_fake(monkeypatch, info_hash=info_hash)
+    d = td.TorrentDownloader(str(client), queue.Queue(), queue.Queue())
     d.download("https://srv.example/client.torrent", {"Data/a.bin"})
-    assert (
-        cache_root / "torrents" / f"{info_hash}.resume"
-    ).read_bytes() == b"resume-bytes"
     assert fake.last_session.removed  # handle removed, never seeded
-    assert any("Resume data saved" in m[0] for m in log_q.queue)
+
+
+def test_download_pump_does_not_stall_during_recheck(tmp_path, monkeypatch):
+    """When resume data is not loaded, libtorrent rechecks the on-disk files
+    (state == checking_files) before downloading. The stall guard must not fire
+    during that recheck even with a tiny DISCOVERY_TIMEOUT."""
+    client = _mk_client(tmp_path)
+
+    class FakeStatus:
+        def __init__(self, call):
+            self.name = "client"
+            self.total_wanted = 10
+            self.total_wanted_done = 10 if call >= 5 else 0
+            self.download_rate = 0
+            self.num_peers = 0
+            self.is_finished = call >= 5
+            self.state = "checking_files" if call < 5 else "finished"
+
+    class FakeHandle:
+        def __init__(self):
+            self.call = 0
+            self.resumed = False
+
+        def status(self):
+            self.call += 1
+            return FakeStatus(self.call)
+
+        def cancel(self):
+            pass
+
+        def pause(self):
+            pass
+
+        def resume(self):
+            self.resumed = True
+
+    class FakeFiles:
+        def __init__(self):
+            self.paths = ["client/Data/a.bin", "client/WoW.exe"]
+            self.sizes = [1024, 4096]
+
+        def num_files(self):
+            return len(self.paths)
+
+        def file_path(self, i):
+            return self.paths[i]
+
+        def file_offset(self, i):
+            return sum(self.sizes[:i])
+
+        def file_size(self, i):
+            return self.sizes[i]
+
+    class FakeTorrentInfo:
+        def files(self):
+            return FakeFiles()
+
+    class FakeSession:
+        def __init__(self, settings):
+            self.settings = settings
+            self.atp = None
+            self.removed = []
+
+        def add_torrent(self, atp):
+            self.atp = atp
+            return FakeHandle()
+
+        def pop_alerts(self):
+            return []
+
+        def wait_for_alert(self, ms):
+            time.sleep(0.02)
+            return None
+
+        def remove_torrent(self, h):
+            self.removed.append(h)
+
+    class FakeLT:
+        class alert:
+            class category_t:
+                error_notification = 1
+                storage_notification = 8
+                status_notification = 16
+
+        class torrent_status:
+            class states:
+                checking_files = "checking_files"
+                checking_resume_data = "checking_resume_data"
+                queued_for_checking = "queued_for_checking"
+                downloading = "downloading"
+                finished = "finished"
+
+        def __init__(self):
+            self.last_session = None
+
+        def torrent_info(self, path):
+            return FakeTorrentInfo()
+
+        def session(self, settings):
+            self.last_session = FakeSession(settings)
+            return self.last_session
+
+        def add_torrent_params(self):
+            return SimpleNamespace()
+
+    fake = FakeLT()
+    monkeypatch.setitem(sys.modules, "libtorrent", fake)
+    monkeypatch.setattr(td, "allowed_download_hosts", lambda: set())
+    monkeypatch.setattr(
+        td,
+        "secure_urlopen",
+        lambda req, timeout=10, allowed_hosts=None: _resp(b"fake"),
+    )
+    monkeypatch.setattr(td, "STALL_TIMEOUT", 0.05)
+    monkeypatch.setattr(td, "DISCOVERY_TIMEOUT", 0.05)
+    d = td.TorrentDownloader(str(client), queue.Queue(), queue.Queue())
+    result = d.download("https://srv.example/client.torrent", {"Data/a.bin"})
+    assert result == []
 
 
 def test_priorities_raises_for_absent_wanted_files(tmp_path, monkeypatch):

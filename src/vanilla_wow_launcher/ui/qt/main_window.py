@@ -622,9 +622,8 @@ class MainWindow(QMainWindow):
         panel.set_updated_files(event.files)
 
     def _onOperationFinished(self, kind: str, ok: bool, message: str):
-        self._stack.widget(self._pages["UPDATE"]).operation_finished(
-            kind, ok, message
-        )
+        panel = self._stack.widget(self._pages["UPDATE"])
+        panel.operation_finished(kind, ok, message)
         updater = self._hub.updater
         if kind in ("update", "verify"):
             # The update worker reports the (post-patch) client version just
