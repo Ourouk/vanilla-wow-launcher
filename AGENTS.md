@@ -144,12 +144,19 @@ src/vanilla_wow_launcher/
   `umu-run` on PATH (or `~/.local/bin/umu-run`). `controllers/update.py`'s
   `launch_game()` splits into `_launch_game_windows()` (Popen, DXVK notice,
   VanillaFixes.exe preference) and `_launch_game_via_umu()` (WoW.exe under
-  Proton in the launcher-wide `data_dir()/wineprefix`, no DXVK notice). umu
-  settings (`GE-Proton` codename, binary override, GAMEID) live in the config's
-  `"launch"` key, edited via `SettingsController.set_umu_*` and rendered in the
-  Settings dialog's Linux (UMU) section. Tests patch the FULL path, e.g.
-  `"vanilla_wow_launcher.services.umu.launch"` (the controller imports the umu
-  module lazily inside the launch method).
+  Proton in the launcher-wide `data_dir()/wineprefix`, no DXVK notice). All umu
+  settings live in the config's `"launch"` key and are edited via
+  `SettingsController.set_umu_*`: `umu_proton` (defaults to `UMU-Proton`, the
+  newest installed Proton — `services/umu.py` `DEFAULT_PROTON`/`default_proton()`),
+  `umu_renderer` (`auto`/`dxvk-d3d8`/`wined3d-opengl`), `umu_gamemode`,
+  `umu_wayland`, `umu_binary_path`, `umu_game_id`. They render in a **dedicated
+  `LinuxSettingsDialog`** (`ui/qt/linux_settings_dialog.py`) opened by the
+  "Linux (UMU) Settings…" button in the main Settings dialog — *not* a section of
+  it. Renderer maps to `PROTON_DXVK_D3D8`/`PROTON_USE_WINED3D` env vars and the
+  `Config.wtf` `gxApi`; GameMode wraps launch in `gamemoderun` (only if
+  installed); Wayland sets `PROTON_ENABLE_WAYLAND=1` (only on a Wayland session).
+  Tests patch the FULL path, e.g. `"vanilla_wow_launcher.services.umu.launch"`
+  (the controller imports the umu module lazily inside the launch method).
 - **One game process at a time**: `umu.launch()` returns `(pid, pgid, proc)`;
   `UpdateController` records it in `state.game_*`, posts `GameLaunched`, and
   spawns a daemon `_watch_game()` thread that `proc.wait()`s and posts
@@ -202,6 +209,12 @@ Keep them in sync when bumping.
 - Tests redirect config to `tmp_path` via `config_store.configure(...)` and
   monkeypatch `CONFIG_FILE`/`CACHE_FILE` on both `core.constants` and
   `controllers.settings` (that module imports them by name).
+- **Testing discipline**: don't overtest. Run only the test(s) that cover the
+  code you changed (e.g. `uv run pytest tests/test_foo.py::test_bar`) while
+  iterating. Run the full suite (`uv run pytest`) only once, right before
+  committing, to catch cross-test interactions. Avoid re-running the whole
+  suite on every edit — it's slow and the known-flaky `test_addons_controller`
+  case makes repeated full runs noisy.
 
 ## Code style gotchas
 
@@ -210,3 +223,10 @@ Keep them in sync when bumping.
   a literal closing `}` must be `}}`. A single unescaped `}` is a hard
   `SyntaxError` at import time that takes down every Qt test — it survives
   `ruff format` too (which aborts on the unparseable file).
+- **Qt settings dialogs are plain `QDialog`s** (no frameless flag), so they
+  already get a native title-bar close button. Do NOT add a custom `✕` close
+  `QPushButton`/`QToolButton` — it renders a second close button beside the
+  native one. Close via the native title bar or `dialog.close()`; tests close
+  via `dialog.close()` (see `test_qt_settings_dialog.py` /
+  `test_qt_smoke.py`). The main `SettingsDialog` and `LinuxSettingsDialog`
+  follow this.
