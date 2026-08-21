@@ -200,29 +200,17 @@ class AddonsController:
                                 branch=avail["branch"],
                                 ref=avail["ref"],
                             )
-                            if remote_checks:
-                                remote = addons.addon_remote_sha(
-                                    rec["git"],
-                                    rec["branch"],
-                                    rec["ref"],
-                                    force=force,
-                                )
-                            else:
-                                remote = addons.addon_cached_sha(
-                                    rec["git"], rec["branch"], rec["ref"]
-                                )
-                                if remote is None:
-                                    # no cached answer — assume current rather
-                                    # than hitting the network
-                                    remote = saved.get("sha")
-                            if remote is None:
-                                rec.update(
-                                    status="unknown", error=C_COULD_NOT_CHECK
-                                )
-                            elif remote == saved.get("sha"):
-                                rec["status"] = "upToDate"
-                            else:
-                                rec["status"] = "outOfDate"
+                            remote = self._resolve_remote_sha(
+                                rec["git"],
+                                rec["branch"],
+                                rec["ref"],
+                                force=force,
+                                remote_checks=remote_checks,
+                                fallback_sha=saved.get("sha"),
+                            )
+                            self._apply_remote_status(
+                                rec, remote, saved.get("sha")
+                            )
                     elif saved and saved.get("git"):
                         # Installed addon not in the catalog (a custom entry) —
                         # keep tracking the saved source.
@@ -231,29 +219,17 @@ class AddonsController:
                             branch=saved.get("branch"),
                             ref=saved.get("ref"),
                         )
-                        if remote_checks:
-                            remote = addons.addon_remote_sha(
-                                rec["git"],
-                                rec["branch"],
-                                rec["ref"],
-                                force=force,
-                            )
-                        else:
-                            remote = addons.addon_cached_sha(
-                                rec["git"], rec["branch"], rec["ref"]
-                            )
-                            if remote is None:
-                                # no cached answer — assume current rather
-                                # than hitting the network
-                                remote = saved.get("sha")
-                        if remote is None:
-                            rec.update(
-                                status="unknown", error=C_COULD_NOT_CHECK
-                            )
-                        elif remote == saved.get("sha"):
-                            rec["status"] = "upToDate"
-                        else:
-                            rec["status"] = "outOfDate"
+                        remote = self._resolve_remote_sha(
+                            rec["git"],
+                            rec["branch"],
+                            rec["ref"],
+                            force=force,
+                            remote_checks=remote_checks,
+                            fallback_sha=saved.get("sha"),
+                        )
+                        self._apply_remote_status(
+                            rec, remote, saved.get("sha")
+                        )
                     elif avail:
                         # Installed addon the launcher has never recorded (a
                         # folder set up elsewhere, or addons pre-dating the
@@ -263,17 +239,13 @@ class AddonsController:
                         # addon from now on — no re-download and no "update"
                         # flag on every pre-existing addon. Offline/rate-limited
                         # resolution leaves it retryable, never "out of date".
-                        if remote_checks:
-                            remote = addons.addon_remote_sha(
-                                avail["git"],
-                                avail["branch"],
-                                avail["ref"],
-                                force=force,
-                            )
-                        else:
-                            remote = addons.addon_cached_sha(
-                                avail["git"], avail["branch"], avail["ref"]
-                            )
+                        remote = self._resolve_remote_sha(
+                            avail["git"],
+                            avail["branch"],
+                            avail["ref"],
+                            force=force,
+                            remote_checks=remote_checks,
+                        )
                         rec.update(
                             git=avail["git"],
                             branch=avail["branch"],
@@ -383,6 +355,38 @@ class AddonsController:
                 }
                 available.append(rec)
             rec["error"] = info.error
+
+    def _resolve_remote_sha(
+        self,
+        git,
+        branch,
+        ref,
+        *,
+        force,
+        remote_checks,
+        fallback_sha=None,
+    ):
+        """The effective remote sha for a tracked source: the live lookup
+        when remote checks are on, otherwise the config cache with an
+        optional saved-sha fallback (assume current rather than hit the
+        network)."""
+        if remote_checks:
+            return addons.addon_remote_sha(git, branch, ref, force=force)
+        remote = addons.addon_cached_sha(git, branch, ref)
+        if remote is None:
+            remote = fallback_sha
+        return remote
+
+    def _apply_remote_status(self, rec: dict, remote, saved_sha):
+        """Classify a resolved remote sha onto a row: unknown (retryable)
+        when unresolved, else up-to-date vs out-of-date against the saved
+        sha."""
+        if remote is None:
+            rec.update(status="unknown", error=C_COULD_NOT_CHECK)
+        elif remote == saved_sha:
+            rec["status"] = "upToDate"
+        else:
+            rec["status"] = "outOfDate"
 
     def toggle(self, folder: str, enabled: bool):
         """Record a pending checkbox change for the addon."""
@@ -546,53 +550,7 @@ class AddonsController:
             catalog = addons.addons_catalog(force=True)
         except Exception:
             catalog = addons.catalog_from_cache()
-
-        blocked = set(addons.BLOCKED_ADDONS)
-        recommended = set(addons.RECOMMENDED_ADDONS)
-        available = []
-        by_name = {}
-        for a in catalog:
-            name = a.get("name")
-            if not name:
-                continue
-            if a.get("blocked"):
-                blocked.add(name)
-            if a.get("recommended"):
-                recommended.add(name)
-            if name in blocked:
-                continue
-            rec = {
-                "folder": name,
-                "status": "available",
-                "git": a.get("git"),
-                "branch": a.get("branch"),
-                "ref": a.get("ref"),
-                "toc": a.get("toc") or {},
-                "description": a.get("description"),
-                "error": None,
-            }
-            available.append(rec)
-            by_name[name] = rec
-
-        for name, override in addons.RECOMMENDED_ADDONS.items():
-            rec = by_name.get(name)
-            if rec is None:
-                available.append(
-                    {
-                        "folder": name,
-                        "status": "available",
-                        "git": override,
-                        "branch": None,
-                        "ref": None,
-                        "toc": {},
-                        "description": None,
-                        "error": None,
-                    }
-                )
-            elif not same_git_repo(rec.get("git"), override):
-                rec.update(git=override, branch=None, ref=None)
-
-        self._recommended = recommended
+        available = self._available_from_catalog(catalog)
         self.state.available = [AddonState.from_dict(rec) for rec in available]
 
     # ── internals ───────────────────────────────────────────────────────────
@@ -652,7 +610,7 @@ class AddonsController:
                 self.state.errors.pop(rec["folder"], None)
                 st_rec = self.state.addons.get(rec["folder"])
                 if st_rec is not None:
-                    # Instant feedback: the row flips to "Up to date" now
+                    # Instant feedback: the row flips to up-to-date now
                     # instead of staying on the stale status until the
                     # post-install verify reconciles it.
                     st_rec.status = "upToDate"

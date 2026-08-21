@@ -16,6 +16,7 @@ import pytest
 
 import vanilla_wow_launcher.controllers.addons as ac
 from vanilla_wow_launcher.controllers.addons import (
+    C_COULD_NOT_CHECK,
     C_OK,
     C_TEXT_DIM,
     AddonsController,
@@ -286,6 +287,50 @@ def test_verify_adoption_unresolvable_is_unknown(
     # Nothing recorded — a later retry can adopt it.
     assert "Foo" not in cfg.get("addons", {})
     assert controller.updates_count == 0
+
+
+def test_verify_disallowed_catalog_git_host_never_contacts_it(
+    cfg, tmp_path, monkeypatch
+):
+    """A catalog entry pointing outside the git-host allowlist must not
+    trigger any API call or git subprocess: the adoption attempt degrades
+    to 'unknown' (retryable) instead of raising. Built on the raw cfg
+    fixture — the backends fixture stubs is_allowed_git_url to True, which
+    would bypass the very gate under test."""
+    client = str(tmp_path)
+    _install_folder(client, "Foo")
+    cfg["addons"] = {}
+    monkeypatch.setattr(
+        ac.addons,
+        "addons_catalog",
+        lambda force=False: [
+            {
+                "name": "Foo",
+                "git": "https://evil.example/org/repo",
+                "branch": "main",
+                "ref": None,
+            }
+        ],
+    )
+    monkeypatch.setattr(ac.addons, "catalog_from_cache", lambda: [])
+
+    def boom(*a, **k):
+        raise AssertionError("disallowed git host must not be contacted")
+
+    monkeypatch.setattr(ac.addons, "secure_urlopen", boom)
+    monkeypatch.setattr(ac.addons.subprocess, "run", boom)
+
+    controller = AddonsController(EventDispatcher())
+
+    assert controller.verify() is True
+    _drain_for(controller._dispatcher, lambda e: isinstance(e, AddonsLoaded))
+    _wait_verify_done(controller)
+
+    rec = controller.state.addons["Foo"]
+    assert rec.status == "unknown"
+    assert rec.error == C_COULD_NOT_CHECK
+    # Nothing recorded — a later retry can adopt it once the host is allowed.
+    assert "Foo" not in cfg.get("addons", {})
 
 
 def test_verify_offline_falls_back_to_cached_catalog(
