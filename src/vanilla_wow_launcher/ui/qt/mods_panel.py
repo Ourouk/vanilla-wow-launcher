@@ -15,9 +15,12 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QToolButton,
     QWidget,
 )
 
+from ...core.helpers import relative_age
+from ...services import mods as mods_service
 from .list_panel import (
     ScrollListPanel,
     add_row_divider,
@@ -157,7 +160,7 @@ class ModsPanel(ScrollListPanel):
         banner.setObjectName("modsBanner")
         banner_layout = QHBoxLayout(banner)
         banner_layout.setContentsMargins(16, 12, 16, 8)
-        banner_layout.setSpacing(0)
+        banner_layout.setSpacing(6)
         for text, color in (
             ("Mods marked with ", p.text_dim),
             ("★", p.gold),
@@ -167,8 +170,41 @@ class ModsPanel(ScrollListPanel):
             part.setStyleSheet(f"color: {color.name()};")
             banner_layout.addWidget(part)
         banner_layout.addStretch(1)
+
+        self._age_label = QLabel("", banner)
+        self._age_label.setObjectName("modsCatalogAge")
+        self._age_label.setStyleSheet(f"color: {p.text_dim.name()};")
+        self._age_label.hide()
+        banner_layout.addWidget(self._age_label)
+
+        refresh = QToolButton(banner)
+        refresh.setObjectName("modsCatalogRefresh")
+        refresh.setText("⟳")
+        refresh.setCursor(Qt.PointingHandCursor)
+        refresh.setToolTip("Reload the mod catalog from the server")
+        refresh.setAccessibleName("Reload mod catalog")
+        refresh.clicked.connect(self._on_refresh_catalog)
+        banner_layout.addWidget(refresh)
+
         self._root_layout.addWidget(banner)
         self._add_hsep()
+        self._refresh_age_label()
+
+    def _refresh_age_label(self):
+        ts = mods_service.catalog_timestamp()
+        if ts:
+            self._age_label.setText(f"Catalog updated {relative_age(ts)}")
+            self._age_label.show()
+        else:
+            self._age_label.hide()
+
+    def _on_refresh_catalog(self):
+        self._mods.reload_catalog()
+
+    def _after_loaded(self):
+        self._refresh_apply_visibility()
+        self._refresh_recommended_visibility()
+        self._refresh_age_label()
 
     def _build_footer(self):
         self._add_hsep()
@@ -336,10 +372,6 @@ class ModsPanel(ScrollListPanel):
         self._refresh_recommended_visibility()
 
     # ── event hooks ────────────────────────────────────────────────────────
-
-    def _after_loaded(self):
-        self._refresh_apply_visibility()
-        self._refresh_recommended_visibility()
 
     def _after_operation(self):
         self._set_running(False)

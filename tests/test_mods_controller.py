@@ -608,3 +608,53 @@ def test_apply_uninstalls_adopted_mod_when_disabled(
     rec = cfg["mods"]["NewMod"]
     assert rec["enabled"] is False
     assert rec["installed_version"] is None
+
+
+def test_load_latest_versions_serves_fresh_catalog_from_cache(
+    controller, monkeypatch, versions
+):
+    import time as time_mod
+
+    monkeypatch.setattr(
+        mc.mods,
+        "load_config",
+        lambda: {
+            "mods_catalog_cache": {
+                "timestamp": time_mod.time() - 60,
+                "catalog": [],
+            }
+        },
+    )
+    calls = []
+    monkeypatch.setattr(
+        mc.mods,
+        "mods_registry",
+        lambda *a, **k: calls.append(k) or [MOD_A, MOD_B],
+    )
+    controller.load_latest_versions()
+    _drain_for(controller._dispatcher, lambda e: isinstance(e, ModsLoaded))
+    # A cache younger than the weekly TTL is served without a refetch.
+    # (A later bare-call lookup from _refresh_updates_count is expected.)
+    assert calls[0] == {"force": False}
+    assert {"force": True} not in calls
+
+
+def test_reload_catalog_forces_fetch_and_republishes(controller, monkeypatch):
+    from vanilla_wow_launcher.state.events import ModsLoaded
+
+    calls = []
+    monkeypatch.setattr(
+        mc.mods,
+        "mods_registry",
+        lambda *a, **k: calls.append(k) or [MOD_A],
+    )
+    assert controller.reload_catalog() is True
+    _drain_for(controller._dispatcher, lambda e: isinstance(e, ModsLoaded))
+    assert calls == [{"force": True}]
+    assert not controller.busy
+
+
+def test_reload_catalog_refused_while_busy(controller, monkeypatch):
+    monkeypatch.setattr(mc.mods, "mods_registry", lambda *a, **k: [MOD_A])
+    controller._busy = True
+    assert controller.reload_catalog() is False

@@ -13,6 +13,7 @@ import os
 import shutil
 import threading
 import time
+from dataclasses import replace
 
 from ..core import config_store
 from ..core.constants import DEFAULT_OUT_DIR
@@ -105,6 +106,24 @@ class AddonsController:
         self.state.busy = True
         self.state.state = "verifying"
 
+        # Instant paint: build a preview snapshot from the persisted catalog
+        # cache (network-free) so the AVAILABLE section shows immediately
+        # while the full scan (filesystem + SHA checks) runs in background.
+        try:
+            cached = addons.catalog_from_cache()
+        except Exception:
+            cached = []
+        if cached:
+            preview_rows = self._available_from_catalog(cached)
+            self._overlay_errors(preview_rows)
+            # A copy: the live state object keeps being mutated by the scan,
+            # so both events must not share one reference.
+            snapshot = replace(self.state)
+            snapshot.available = [
+                AddonState.from_dict(rec) for rec in preview_rows
+            ]
+            self._dispatcher.post(AddonsLoaded(snapshot))
+
         def worker():
             try:
                 catalog = addons.addons_catalog(force=force)
@@ -112,57 +131,7 @@ class AddonsController:
                 # offline — fall back to whatever the config still holds
                 catalog = addons.catalog_from_cache()
 
-            # Blocked / recommended come from the curated constants plus any
-            # flags the catalog (remote or custom) carries.
-            blocked = set(addons.BLOCKED_ADDONS)
-            recommended = set(addons.RECOMMENDED_ADDONS)
-            available = []
-            by_name = {}
-            for a in catalog:
-                name = a.get("name")
-                if not name:
-                    continue
-                if a.get("blocked"):
-                    blocked.add(name)
-                if a.get("recommended"):
-                    recommended.add(name)
-                if name in blocked:
-                    continue
-                rec = {
-                    "folder": name,
-                    "status": "available",
-                    "git": a.get("git"),
-                    "branch": a.get("branch"),
-                    "ref": a.get("ref"),
-                    "toc": a.get("toc") or {},
-                    "description": a.get("description"),
-                    "error": None,
-                }
-                available.append(rec)
-                by_name[name] = rec
-
-            # Curated recommendations: apply git-URL overrides on top of the
-            # catalog, and synthesize entries for recommended addons the
-            # catalog doesn't carry (or has renamed). Overridden forks may
-            # use a different default branch, so branch/ref are reset.
-            for name, override in addons.RECOMMENDED_ADDONS.items():
-                rec = by_name.get(name)
-                if rec is None:
-                    available.append(
-                        {
-                            "folder": name,
-                            "status": "available",
-                            "git": override,
-                            "branch": None,
-                            "ref": None,
-                            "toc": {},
-                            "description": None,
-                            "error": None,
-                        }
-                    )
-                elif not same_git_repo(rec.get("git"), override):
-                    rec.update(git=override, branch=None, ref=None)
-            self._recommended = recommended
+            available = self._available_from_catalog(catalog)
 
             installed = {}
             records = config_store.load_config().get("addons", {})
@@ -338,27 +307,82 @@ class AddonsController:
             # and dropped.
             for folder in [f for f in self.state.errors if f in installed]:
                 self.state.errors.pop(folder, None)
-            by_name = {a["folder"]: a for a in available}
-            for folder, info in self.state.errors.items():
-                rec = by_name.get(folder)
-                if rec is None:
-                    rec = {
-                        "folder": folder,
+            self._overlay_errors(available)
+
+            self._finish_verify(installed, available)
+
+        threading.Thread(target=worker, daemon=True).start()
+        return True
+
+    def _available_from_catalog(self, catalog_list: list) -> list:
+        """Map catalog entries to AVAILABLE row dicts: curated blocked/
+        recommended flags plus any flags the catalog carries, with curated
+        git overrides applied (and synthesized rows for renamed entries)."""
+        blocked = set(addons.BLOCKED_ADDONS)
+        recommended = set(addons.RECOMMENDED_ADDONS)
+        available = []
+        by_name = {}
+        for a in catalog_list:
+            name = a.get("name")
+            if not name:
+                continue
+            if a.get("blocked"):
+                blocked.add(name)
+            if a.get("recommended"):
+                recommended.add(name)
+            if name in blocked:
+                continue
+            rec = {
+                "folder": name,
+                "status": "available",
+                "git": a.get("git"),
+                "branch": a.get("branch"),
+                "ref": a.get("ref"),
+                "toc": a.get("toc") or {},
+                "description": a.get("description"),
+                "error": None,
+            }
+            available.append(rec)
+            by_name[name] = rec
+        for name, override in addons.RECOMMENDED_ADDONS.items():
+            rec = by_name.get(name)
+            if rec is None:
+                available.append(
+                    {
+                        "folder": name,
                         "status": "available",
-                        "git": info.git,
+                        "git": override,
                         "branch": None,
                         "ref": None,
                         "toc": {},
                         "description": None,
                         "error": None,
                     }
-                    available.append(rec)
-                rec["error"] = info.error
+                )
+            elif not same_git_repo(rec.get("git"), override):
+                rec.update(git=override, branch=None, ref=None)
+        self._recommended = recommended
+        return available
 
-            self._finish_verify(installed, available)
-
-        threading.Thread(target=worker, daemon=True).start()
-        return True
+    def _overlay_errors(self, available: list):
+        """Re-attach session install errors to their AVAILABLE rows,
+        synthesizing a row for failed custom addons."""
+        by_name = {a["folder"]: a for a in available}
+        for folder, info in self.state.errors.items():
+            rec = by_name.get(folder)
+            if rec is None:
+                rec = {
+                    "folder": folder,
+                    "status": "available",
+                    "git": info.git,
+                    "branch": None,
+                    "ref": None,
+                    "toc": {},
+                    "description": None,
+                    "error": None,
+                }
+                available.append(rec)
+            rec["error"] = info.error
 
     def toggle(self, folder: str, enabled: bool):
         """Record a pending checkbox change for the addon."""
@@ -726,9 +750,7 @@ class AddonsController:
                 )
                 if not sha:
                     raise RuntimeError("Could not resolve remote commit")
-                addons.install_addon_files(
-                    client, rec.folder, rec.git, sha
-                )
+                addons.install_addon_files(client, rec.folder, rec.git, sha)
                 if rec.folder == "pfUI":
                     addons.patch_pfui_default_profile(client)
                 record = {
@@ -760,9 +782,7 @@ class AddonsController:
                 if st_rec is not None:
                     st_rec.status = "invalid"
                     st_rec.error = err
-                self.state.errors[rec.folder] = AddonError(
-                    err, rec.git
-                )
+                self.state.errors[rec.folder] = AddonError(err, rec.git)
                 failed.append(rec.folder)
 
         self.state.pending = {}

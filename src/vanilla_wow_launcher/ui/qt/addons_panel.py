@@ -21,7 +21,12 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ...core.helpers import parse_wow_colored, strip_wow_colors
+from ...core.helpers import (
+    parse_wow_colored,
+    relative_age,
+    strip_wow_colors,
+)
+from ...services import addons as addons_service
 from .list_panel import (
     ClickableLabel,
     ScrollListPanel,
@@ -240,6 +245,24 @@ class AddonsPanel(ScrollListPanel):
 
         top_layout.addStretch(1)
 
+        self._age_label = QLabel("", top)
+        self._age_label.setObjectName("addonsCatalogAge")
+        self._age_label.setStyleSheet(f"color: {p.text_dim.name()};")
+        self._age_label.hide()
+        top_layout.addWidget(self._age_label)
+
+        refresh = QToolButton(top)
+        refresh.setObjectName("addonsCheck")
+        refresh.setText("⟳  Check for updates")
+        refresh.setCursor(Qt.PointingHandCursor)
+        refresh.setToolTip(
+            "Re-check every addon against its repository "
+            "(reloads the catalog too)"
+        )
+        refresh.setAccessibleName("Check addons for updates")
+        refresh.clicked.connect(self._on_check)
+        top_layout.addWidget(refresh)
+
         self._filter = QLineEdit(top)
         self._filter.setObjectName("addonsFilter")
         self._filter.setPlaceholderText("⌕  Search addons")
@@ -253,6 +276,15 @@ class AddonsPanel(ScrollListPanel):
         top_layout.addWidget(self._filter)
         self._root_layout.addWidget(top)
         self._add_hsep()
+        self._refresh_age_label()
+
+    def _refresh_age_label(self):
+        ts = addons_service.catalog_last_updated()
+        if ts:
+            self._age_label.setText(f"Catalog updated {relative_age(ts)}")
+            self._age_label.show()
+        else:
+            self._age_label.hide()
 
     def _build_footer(self):
         p = self._palette
@@ -260,15 +292,6 @@ class AddonsPanel(ScrollListPanel):
         footer = QWidget(self)
         footer_layout = QHBoxLayout(footer)
         footer_layout.setContentsMargins(16, 6, 16, 10)
-
-        check = QToolButton(footer)
-        check.setObjectName("addonsCheck")
-        check.setText("⟳  Check for updates")
-        check.setCursor(Qt.PointingHandCursor)
-        check.setStyleSheet(f"color: {p.text_dim.name()};")
-        check.setToolTip("Re-check every addon against its repository")
-        check.clicked.connect(self._on_check)
-        footer_layout.addWidget(check)
 
         self._recommended_button = QPushButton(
             "★  Install Recommended", footer
@@ -428,10 +451,11 @@ class AddonsPanel(ScrollListPanel):
     def _on_check(self):
         if self._addons.verify(force=True):
             self._refresh_footer()
+            self._refresh_age_label()
 
     def _on_retry(self, rec):
         """Re-verify after a "Couldn't check" — same force-verify as the
-        footer's Check for updates."""
+        header's Check for updates."""
         self._on_check()
 
     def _on_update_all(self):
@@ -479,6 +503,7 @@ class AddonsPanel(ScrollListPanel):
     def _after_loaded(self):
         self._refresh_recommended_visibility()
         self._refresh_apply_visibility()
+        self._refresh_age_label()
 
     def _after_operation(self):
         self._set_running(False)

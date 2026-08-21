@@ -973,7 +973,7 @@ events asserted via monkeypatched `QMessageBox`/signals; `conftest` autouse
 | K5 | `torrent_update.py` | `write_resume_bytes`/`resume_path` invoked only by tests; `remove_resume_data` (live) is used by `http_update.py` to drop stale resume files, but resume data is never persisted — by design the updater re-derives piece state from disk and ignores stale resume data (asserted by `test_torrent_download` "resume" case). **Retained** (coherent tested cache API); not a defect. | Dead code + misleading comment at `http_update.py:793`. | None functionally. | **High** |
 | K6 | `controllers/addons.py` | `verify()` catalog-parse loop duplicated in `_ensure_catalog_loaded`. | Drift risk. | Maintenance hazard. | **Medium** |
 | K7 | `core/filesystem.py:71-76` | `get_client_version` uses fixed 1.12.1 offsets `0x00437BFC`/`0x00437C04`. | Different client builds → wrong version. | Wrong footer version label. | **Medium** |
-| K8 | `services/mods.py:fetch_mods_catalog` | Mods catalog has no TTL; cached forever unless `force=True`. | Stale mod list until manual Reload. | Users may not see new mods. | **Medium** |
+| K8 | `services/mods.py:fetch_mods_catalog` | Mods catalog had no TTL; cached forever unless `force=True`. **FIXED 2026-08-22**: weekly `catalog.CATALOG_TTL` + `catalog_is_stale()` gates the startup refresh; panels paint instantly from the cache with a "Catalog updated …" tag and ⟳ reload. | Stale mod list until manual Reload. | Users may not see new mods. | **Medium** |
 | K9 | `.tmp` (repo root) | Untracked file `{"out_dir": "/home/ourouk/Games/OctoWoW"}` — local artifact. **FIXED 2026-08-21**: deleted; root cause (a `save_cache` call before `configure()` made `_atomic_write("")` leak a `.tmp` into CWD) closed by making `save_config`/`save_cache` no-ops until the store is configured. | Should not be committed/left. | None (untracked). | **High** |
 | K10 | `controllers/settings.py` ↔ `cli.py` | Two "default game folder" values (`DEFAULT_OUT_DIR=~/VanillaWoW` vs `cli` sets `~/Games/<server>`). | Settings shows one, cli sets another. | Confusing first-run UX. | **Medium** |
 | K11 | `BITTORRENT_UPDATER_NOTES.md` docstring vs code (§12.7) | Claim of post-torrent manifest re-verify not implemented. | Misleading doc. | Trust reasoning unclear. | **Medium** |
@@ -1005,8 +1005,9 @@ events asserted via monkeypatched `QMessageBox`/signals; `conftest` autouse
 - **M1.** ~~Sanitize mod release asset names (`safe_relpath`) to close §12.2.~~
   **DONE 2026-08-21** — `mods._checked_rel()` guards all install sites.
 - **M2.** Enforce git-host allowlist at all addon verify/metadata sites (§12.3).
-- **M3.** Add a mods-catalog TTL (K8) or document the "cache until Reload"
-  choice explicitly.
+- **M3.** ~~Add a mods-catalog TTL (K8) or document the "cache until Reload"
+  choice explicitly.~~ **DONE 2026-08-22** — weekly TTL shared by both
+  catalogs; startup no longer force-bypasses the addons cache either.
 - **M4.** De-duplicate the addons catalog-parse logic (K6).
 - **M5.** Make `get_client_version` offset configurable / version-aware or
   document the 1.12.1 coupling (K7).
@@ -1089,7 +1090,7 @@ events asserted via monkeypatched `QMessageBox`/signals; `conftest` autouse
   `mods.install_mod` (release/zip/tar, `dxvk.conf` hook) → `mods.add_dll` →
   merge `mods_cfg` into config atomically.
 - **Files:** `controllers/mods.py`, `services/mods.py`, `services/catalog.py`.
-- **Risks:** asset-name path unsanitized (§12.2); mods catalog no TTL (K8).
+- **Risks:** asset-name path unsanitized (§12.2, fixed); mods catalog TTL now weekly (K8 fixed).
 
 ### Workflow 7 — Game launch
 - **Windows:** `UpdateController._launch_game_windows` → `subprocess.Popen`

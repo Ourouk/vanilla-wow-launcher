@@ -35,6 +35,11 @@ MOD_POST_INSTALL_HOOKS = {"write_dxvk_conf"}
 
 CUSTOM_FILE_TEMPLATE = "[\n]\n"
 
+# Catalogs auto-refresh at most once a week: startup and panel loads serve
+# the persisted cache instantly, and only a cache older than this TTL (or an
+# explicit Settings → Reload / ⟳ refresh) hits the network again.
+CATALOG_TTL = 7 * 86400
+
 
 # ── catalog URL storage ──────────────────────────────────────────────────────
 

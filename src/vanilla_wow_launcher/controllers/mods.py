@@ -70,19 +70,16 @@ class ModsController:
         """Background-fetch every registry mod's latest release and publish a
         ModsLoaded snapshot so the panel can re-render and refresh its badge.
 
-        On a first launch (or whenever the mod catalog has never been fetched)
-        the catalog is fetched once first — otherwise the MODS tab would stay
-        empty until the user hits Settings → Reload. Offline/failed fetches
-        leave it empty rather than blocking startup.
+        The catalog itself is served from the persisted cache (instant) and
+        only refetched once it is older than the weekly `catalog.CATALOG_TTL`
+        — or on a first launch, when there is no cache yet. Offline/failed
+        fetches fall back to the cached copy rather than blocking startup.
         """
 
         def worker():
             latest = {}
-            # Always re-fetch the catalog on startup so newly-added entries
-            # surface without a manual Settings → Reload. Falls back to the
-            # cached copy (or an empty list) when the network is unavailable.
             try:
-                registry = mods.mods_registry(force=True)
+                registry = mods.mods_registry(force=mods.catalog_is_stale())
             except Exception:
                 try:
                     registry = mods.mods_registry() or []
@@ -103,6 +100,29 @@ class ModsController:
 
     def toggle(self, mod_id: str, enabled: bool):
         self.state.pending.setdefault(mod_id, ModPending()).enabled = enabled
+
+    def reload_catalog(self) -> bool:
+        """Force-refetch the mod catalog and republish the snapshot so the
+        panel picks up new/changed entries without waiting for the weekly
+        auto-refresh. Returns True when the worker actually started."""
+        if self._busy:
+            return False
+
+        def worker():
+            try:
+                mods.mods_registry(force=True)
+            except Exception as e:
+                self._dispatcher.post(
+                    LogMessage(f"✗ Mod catalog reload failed: {e}\n", "err")
+                )
+                return
+            finally:
+                self._busy = False
+            self._dispatcher.post(ModsLoaded(self.state))
+
+        self._busy = True
+        threading.Thread(target=worker, daemon=True).start()
+        return True
 
     def action_for(self, mod_id: str) -> str | None:
         """'retry' when the mod is in an error state, 'update' when a newer

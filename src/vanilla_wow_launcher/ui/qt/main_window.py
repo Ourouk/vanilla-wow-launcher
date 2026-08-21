@@ -800,8 +800,9 @@ class MainWindow(QMainWindow):
         self._after(900, hub.mods.load_latest_versions)
         # Verify unconditionally so a first-launch user with an
         # uninitialized config still sees the catalog list (the verify TTL
-        # skips redundant rescans on later launches).
-        self._after(1500, lambda: hub.addons.verify(force=True))
+        # skips redundant rescans on later launches). The catalog fetch
+        # inside is served from the weekly cache unless it went stale.
+        self._after(1500, hub.addons.verify)
         self._after(2000, hub.updater.check_updater_update)
 
     def _after(self, ms: int, callback):

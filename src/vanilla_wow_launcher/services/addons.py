@@ -29,7 +29,9 @@ from ..core.log_sink import log
 from ..core.security_http import secure_urlopen
 from . import catalog
 
-ADDONS_CATALOG_TTL = 86400  # 1 day, persisted in the config file
+# Catalogs refresh at most weekly (shared catalog.CATALOG_TTL); the
+# per-URL timestamp lives in the config file.
+ADDONS_CATALOG_TTL = catalog.CATALOG_TTL
 ADDON_SHA_CACHE_TTL = 3600
 ADDONS_VERIFY_TTL = 300  # skip re-verify on tab switches within this
 
@@ -192,6 +194,18 @@ def catalog_from_cache() -> list:
     return catalog.merge_addons(
         merged, catalog.load_custom("addons", _custom_validator)
     )
+
+
+def catalog_last_updated() -> float | None:
+    """The newest per-URL catalog fetch timestamp (epoch), or None when no
+    catalog was ever fetched. Network-free."""
+    cache = _config_store.load_config().get("addons_catalog_cache", {}) or {}
+    stamps = [
+        e.get("timestamp")
+        for e in cache.values()
+        if isinstance(e, dict) and isinstance(e.get("timestamp"), (int, float))
+    ]
+    return max(stamps) if stamps else None
 
 
 def registry_url() -> str:

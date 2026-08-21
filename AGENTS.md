@@ -83,9 +83,16 @@ src/vanilla_wow_launcher/
 - The mods/addons lists come from remote JSON catalogs (`services/catalog.py`
   holds the shared validation/merge logic; the fetch entry points live in
   `services/mods.py` / `services/addons.py`). `mods.mods_registry()` is
-  network-free on non-forced calls (cache → empty list); only Settings
-  "Reload" forces a fetch. There is no bundled registry/recommended list —
-  tests provide one by monkeypatching `mods.mods_registry()`.
+  network-free on non-forced calls (cache → empty list). Catalogs auto-refresh
+  at most weekly (`catalog.CATALOG_TTL`): startup serves the persisted cache
+  instantly (ADDONS via a preview snapshot posted before the verify scan) and
+  refetches only when `catalog_is_stale()` / the per-URL TTL says so — explicit
+  Settings "Reload" always forces, the MODS panel's header ⟳ uses
+  `mods.reload_catalog()`, and the single ADDONS ⟳ ("Check for updates", in
+  the header next to the age tag) runs `verify(force=True)`, which refetches
+  the online catalog(s) AND rescans SHAs. Panel headers show a "Catalog
+  updated …" age tag. There is no bundled registry/recommended list — tests
+  provide one by monkeypatching `mods.mods_registry()`.
 - Client updates get a second download backend: when the active download
   source advertises a `torrent_url` (launcher config, server or mirror) and
   libtorrent is importable, `UpdateWorker` bulk-downloads the stale files via

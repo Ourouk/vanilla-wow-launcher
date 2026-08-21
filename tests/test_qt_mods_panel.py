@@ -410,3 +410,43 @@ def test_mod_without_repo_url_hides_source_link(qapp, window, hub):
     assert row is not None
     link = row.findChild(QLabel, "modsLink_NoRepoMod")
     assert link is None
+
+
+def test_catalog_age_label_and_refresh_button(qapp, window, hub, monkeypatch):
+    import time as time_mod
+
+    from PySide6.QtWidgets import QToolButton
+
+    monkeypatch.setattr(
+        mods_module,
+        "load_config",
+        lambda: {
+            "mods_catalog_cache": {
+                "timestamp": time_mod.time() - 3600,
+                "catalog": [],
+            }
+        },
+    )
+    panel = _panel(window)
+    panel._refresh_age_label()
+    label = panel.findChild(QLabel, "modsCatalogAge")
+    assert label is not None
+    assert not label.isHidden()
+    assert label.text().startswith("Catalog updated 1h ago")
+
+    reload_mock = Mock(return_value=True)
+    monkeypatch.setattr(hub.mods, "reload_catalog", reload_mock)
+    refresh = panel.findChild(QToolButton, "modsCatalogRefresh")
+    refresh.click()
+    assert reload_mock.called
+
+
+def test_catalog_age_label_hidden_without_cache(
+    qapp, window, hub, monkeypatch
+):
+    monkeypatch.setattr(mods_module, "load_config", lambda: {})
+    panel = _panel(window)
+    panel._refresh_age_label()
+    label = panel.findChild(QLabel, "modsCatalogAge")
+    assert label is not None
+    assert label.isHidden()

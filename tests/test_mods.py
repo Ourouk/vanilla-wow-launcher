@@ -585,3 +585,35 @@ def test_apply_essential_mods_skips_without_client(tmp_path, monkeypatch):
     monkeypatch.setattr(controller, "apply", lambda *a, **k: None)
 
     assert controller.apply_essential_mods() is False
+
+
+def test_catalog_is_stale_branches(monkeypatch):
+    import vanilla_wow_launcher.services.catalog as catalog
+    from vanilla_wow_launcher.services import mods as mods_svc
+
+    now = 1_000_000_000.0
+    week = catalog.CATALOG_TTL
+    cases = {
+        None: True,  # never fetched
+        now - week + 60: False,  # fresh (just under the TTL)
+        now - week - 60: True,  # older than the weekly TTL
+    }
+    for ts, expected in cases.items():
+        entry = {} if ts is None else {"timestamp": ts, "catalog": []}
+        monkeypatch.setattr(
+            mods_svc, "load_config", lambda e=entry: {"mods_catalog_cache": e}
+        )
+        assert mods_svc.catalog_is_stale(now=now) is expected, ts
+
+
+def test_catalog_timestamp_roundtrip(monkeypatch):
+    from vanilla_wow_launcher.services import mods as mods_svc
+
+    monkeypatch.setattr(mods_svc, "load_config", lambda: {})
+    assert mods_svc.catalog_timestamp() is None
+    monkeypatch.setattr(
+        mods_svc,
+        "load_config",
+        lambda: {"mods_catalog_cache": {"timestamp": 123.5, "catalog": []}},
+    )
+    assert mods_svc.catalog_timestamp() == 123.5

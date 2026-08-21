@@ -268,7 +268,7 @@ def test_startup_tasks_schedule_addons_verify_on_first_run(
     window.schedule_startup_tasks()
     QTest.qWait(1700)
 
-    addons_verify.assert_called_once_with(force=True)
+    addons_verify.assert_called_once_with()
 
 
 # ── header wordmark ─────────────────────────────────────────────────────────

@@ -34,6 +34,23 @@ def _checked_rel(dest_rel) -> str:
 CUSTOM_FILE_TEMPLATE = "[\n]\n"
 
 
+def catalog_timestamp() -> float | None:
+    """When the mod catalog cache was last fetched (epoch), or None."""
+    entry = load_config().get("mods_catalog_cache", {})
+    ts = entry.get("timestamp")
+    return ts if isinstance(ts, (int, float)) and ts > 0 else None
+
+
+def catalog_is_stale(now: float | None = None) -> bool:
+    """Whether the cached catalog is missing or older than the weekly
+    `catalog.CATALOG_TTL` — i.e. a background refresh is due. Network-free."""
+    ts = catalog_timestamp()
+    if ts is None:
+        return True
+    now = now if now is not None else time.time()
+    return (now - ts) >= catalog.CATALOG_TTL
+
+
 def fetch_mods_catalog(force=False) -> list | None:
     """Mod catalog, cached in the config file ({"mods_catalog_cache":
     {"timestamp": epoch, "catalog": […]}}).

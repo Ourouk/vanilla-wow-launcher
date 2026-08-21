@@ -109,3 +109,15 @@ def test_format_news_date():
 
 def test_format_news_date_invalid_returns_input():
     assert format_news_date("not-a-date") == "not-a-date"
+
+
+def test_relative_age_buckets():
+    from vanilla_wow_launcher.core.helpers import relative_age
+
+    now = 1_000_000_000
+    assert relative_age(None) == ""
+    assert relative_age(0) == ""
+    assert relative_age(now - 30, now=now) == "just now"
+    assert relative_age(now - 5 * 60, now=now) == "5m ago"
+    assert relative_age(now - 3 * 3600, now=now) == "3h ago"
+    assert relative_age(now - 2 * 86400, now=now) == "2d ago"

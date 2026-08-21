@@ -102,6 +102,15 @@ def _drain_for(dispatcher, predicate, timeout=2.0):
         time.sleep(0.005)
 
 
+def _wait_verify_done(controller, timeout=2.0):
+    """Block until a running verify/reload worker finished. The cached
+    preview AddonsLoaded now fires before the scan completes, so tests
+    asserting final state must settle past it."""
+    deadline = time.monotonic() + timeout
+    while controller.state.busy and time.monotonic() < deadline:
+        time.sleep(0.005)
+
+
 def _install_folder(client, name):
     """Create a real installed-addon folder with a .toc on disk."""
     addon_dir = os.path.join(client, "Interface", "AddOns", name)
@@ -128,6 +137,7 @@ def test_verify_scans_and_posts_addons_loaded(controller, cfg, tmp_path):
 
     assert controller.verify() is True
     _drain_for(controller._dispatcher, lambda e: isinstance(e, AddonsLoaded))
+    _wait_verify_done(controller)
 
     assert controller.state.state == "done"
 
@@ -185,6 +195,7 @@ def test_verify_marks_unreachable_addon_unknown(
 
     assert controller.verify() is True
     _drain_for(controller._dispatcher, lambda e: isinstance(e, AddonsLoaded))
+    _wait_verify_done(controller)
 
     rec = controller.state.addons["Foo"]
     assert rec.status == "unknown"
@@ -227,6 +238,7 @@ def test_verify_adopts_untracked_installed_catalog_addon(
 
     assert controller.verify() is True
     _drain_for(controller._dispatcher, lambda e: isinstance(e, AddonsLoaded))
+    _wait_verify_done(controller)
 
     rec = controller.state.addons["Foo"]
     assert rec.status == "upToDate"
@@ -266,6 +278,7 @@ def test_verify_adoption_unresolvable_is_unknown(
 
     assert controller.verify() is True
     _drain_for(controller._dispatcher, lambda e: isinstance(e, AddonsLoaded))
+    _wait_verify_done(controller)
 
     rec = controller.state.addons["Foo"]
     assert rec.status == "unknown"
@@ -289,6 +302,7 @@ def test_verify_offline_falls_back_to_cached_catalog(
 
     assert controller.verify() is True
     _drain_for(controller._dispatcher, lambda e: isinstance(e, AddonsLoaded))
+    _wait_verify_done(controller)
 
     assert any(a.folder == "Foo" for a in controller.state.available)
 
@@ -305,10 +319,12 @@ def test_verify_ttl_skips_second_unless_force(controller, cfg, tmp_path):
 
     assert controller.verify() is True
     _drain_for(controller._dispatcher, lambda e: isinstance(e, AddonsLoaded))
+    _wait_verify_done(controller)
     # Within the TTL a plain verify is a no-op; force() bypasses it.
     assert controller.verify() is False
     assert controller.verify(force=True) is True
     _drain_for(controller._dispatcher, lambda e: isinstance(e, AddonsLoaded))
+    _wait_verify_done(controller)
 
 
 def test_verify_skips_when_busy(controller, cfg, monkeypatch):
@@ -342,6 +358,7 @@ def test_verify_remote_checks_false_never_calls_remote_sha(
 
     assert controller.verify(remote_checks=False) is True
     _drain_for(controller._dispatcher, lambda e: isinstance(e, AddonsLoaded))
+    _wait_verify_done(controller)
 
     assert calls == []
     # The cached sha matches the saved one — current without any API call.
@@ -380,6 +397,7 @@ def test_verify_uses_catalog_source_when_saved_differs(
 
     assert controller.verify() is True
     _drain_for(controller._dispatcher, lambda e: isinstance(e, AddonsLoaded))
+    _wait_verify_done(controller)
 
     # The launcher catalog wins: a source conflict surfaces as an update
     # that migrates to the catalog repo — no remote check against the old one.
@@ -425,6 +443,7 @@ def test_verify_checks_catalog_branch_when_repos_match(
 
     assert controller.verify() is True
     _drain_for(controller._dispatcher, lambda e: isinstance(e, AddonsLoaded))
+    _wait_verify_done(controller)
 
     # Same repo but a different configured branch: verify uses the catalog's
     # branch, so the new branch's sha surfaces as an update.
@@ -457,6 +476,7 @@ def test_verify_honors_catalog_recommended_and_blocked(
 
     assert controller.verify() is True
     _drain_for(controller._dispatcher, lambda e: isinstance(e, AddonsLoaded))
+    _wait_verify_done(controller)
 
     folders = {a.folder for a in controller.state.available}
     assert "Star" in folders
@@ -856,3 +876,45 @@ def test_reset_clears_state(controller, cfg):
     assert controller.state.updates_count == 0
     # Section open/closed state survives a folder change.
     assert controller.state.sections_open["INSTALLED"] is False
+
+
+def _drain_n(dispatcher, kind, n, timeout=2.0):
+    """Drain until `n` events of `kind` arrived (assertion failure otherwise);
+    returns all collected events."""
+    deadline = time.monotonic() + timeout
+    events = []
+    while time.monotonic() < deadline:
+        events.extend(dispatcher.drain())
+        if sum(isinstance(e, kind) for e in events) >= n:
+            return events
+        time.sleep(0.01)
+    events.extend(dispatcher.drain())
+    assert sum(isinstance(e, kind) for e in events) >= n, (
+        f"only {sum(isinstance(e, kind) for e in events)} {kind.__name__}"
+    )
+    return events
+
+
+def test_verify_posts_cached_preview_before_scan(controller, monkeypatch):
+    """verify() paints instantly from the persisted cache: an initial
+    network-free AddonsLoaded precedes the full scan result."""
+    preview_catalog = [
+        {"name": "CachedAddon", "git": "https://github.com/x/cached"}
+    ]
+    monkeypatch.setattr(
+        ac.addons, "catalog_from_cache", lambda: preview_catalog
+    )
+    monkeypatch.setattr(
+        ac.addons,
+        "addons_catalog",
+        lambda force=False: [
+            {"name": "FreshAddon", "git": "https://github.com/x/fresh"}
+        ],
+    )
+
+    assert controller.verify() is True
+    events = _drain_n(controller._dispatcher, AddonsLoaded, 2)
+    loaded = [e for e in events if isinstance(e, AddonsLoaded)]
+    # First snapshot is the cache preview; the scan supersedes it.
+    assert [a.folder for a in loaded[0].state.available] == ["CachedAddon"]
+    assert [a.folder for a in loaded[-1].state.available] == ["FreshAddon"]

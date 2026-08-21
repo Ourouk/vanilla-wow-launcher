@@ -466,3 +466,79 @@ def test_addon_without_git_hides_source_link(qapp, window, hub):
     assert row is not None
     link = row.findChild(QLabel, "addonsLink_NoGitAddon")
     assert link is None
+
+
+def test_catalog_age_label_and_refresh_button(qapp, window, hub, monkeypatch):
+    import time as time_mod
+
+    import vanilla_wow_launcher.services.addons as addons_module
+
+    monkeypatch.setattr(
+        addons_module,
+        "catalog_last_updated",
+        lambda: time_mod.time() - 3600,
+    )
+    panel = _panel(window)
+    panel._refresh_age_label()
+    label = panel.findChild(QLabel, "addonsCatalogAge")
+    assert label is not None
+    assert not label.isHidden()
+    assert label.text().startswith("Catalog updated 1h ago")
+
+    # The single ⟳ lives in the header and runs a full force-verify.
+    verify_mock = Mock(return_value=True)
+    monkeypatch.setattr(hub.addons, "verify", verify_mock)
+    from PySide6.QtWidgets import QToolButton
+
+    refresh = panel.findChild(QToolButton, "addonsCheck")
+    assert panel.findChild(QToolButton, "addonsCatalogRefresh") is None
+    refresh.click()
+    verify_mock.assert_called_once_with(force=True)
+
+
+def test_catalog_age_label_hidden_without_cache(
+    qapp, window, hub, monkeypatch
+):
+    import vanilla_wow_launcher.services.addons as addons_module
+
+    monkeypatch.setattr(addons_module, "catalog_last_updated", lambda: None)
+    panel = _panel(window)
+    panel._refresh_age_label()
+    label = panel.findChild(QLabel, "addonsCatalogAge")
+    assert label is not None
+    assert label.isHidden()
+
+
+def test_check_for_updates_refetches_online_catalogs(
+    qapp, window, hub, monkeypatch
+):
+    """The single header ⟳ must not just rescan SHAs: it force-refetches
+    the online catalog(s) too (bypassing the weekly TTL)."""
+    import vanilla_wow_launcher.services.addons as addons_module
+
+    calls = []
+    monkeypatch.setattr(
+        hub.addons,
+        "verify",
+        lambda *a, **k: calls.append(k) or True,
+    )
+    # And at the service layer the forced verify really hits the fetcher:
+    fetch_calls = []
+    monkeypatch.setattr(
+        addons_module,
+        "fetch_addons_catalog",
+        lambda force=False: fetch_calls.append(force) or [],
+    )
+    monkeypatch.setattr(
+        addons_module.catalog,
+        "load_custom",
+        lambda kind, validator: [],
+    )
+    panel = _panel(window)
+    check = panel.findChild(QToolButton, "addonsCheck")
+    QTest.mouseClick(check, Qt.LeftButton)
+    assert calls == [{"force": True}]
+
+    # Service-level: a forced addons_catalog propagates force to the fetch.
+    addons_module.addons_catalog(force=True)
+    assert fetch_calls == [True]
