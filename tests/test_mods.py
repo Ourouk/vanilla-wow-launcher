@@ -263,6 +263,26 @@ def test_remove_unknown_mod_removes_line_and_file(tmp_path):
     assert not (client / "mystery.dll").exists()
 
 
+def test_remove_unknown_mod_never_deletes_outside_client(tmp_path):
+    """A traversal entry in mod-written dlls.txt must not delete files
+    outside the client dir (the dlls.txt line itself is still dropped)."""
+    client = tmp_path / "client"
+    client.mkdir()
+    victim = tmp_path / "victim.dll"
+    victim.write_bytes(b"MZ")
+    (client / "dlls.txt").write_text("../victim.dll\n")
+    mods.remove_unknown_mod(str(client), "../victim.dll")
+    assert victim.exists()
+    assert not (client / "dlls.txt").exists()
+
+
+def test_add_dll_rejects_traversal_entry(tmp_path):
+    client = tmp_path / "client"
+    client.mkdir()
+    mods.add_dll(str(client), "../../evil.dll")
+    assert not (client / "dlls.txt").exists()
+
+
 # ── update detection ─────────────────────────────────────────────────────────
 
 
@@ -280,26 +300,17 @@ def test_mod_update_available_logic():
     live = {"latest_version": "2.0"}
     assert mods.mod_update_available(
         mod,
-        {"enabled": True, "installed_version": "1.0", "ignore_updates": False},
+        {"enabled": True, "installed_version": "1.0"},
         live,
     )
     assert not mods.mod_update_available(
         mod,
-        {"enabled": True, "installed_version": "2.0", "ignore_updates": False},
+        {"enabled": True, "installed_version": "2.0"},
         live,
     )
     assert not mods.mod_update_available(
         mod,
-        {
-            "enabled": False,
-            "installed_version": "1.0",
-            "ignore_updates": False,
-        },
-        live,
-    )
-    assert not mods.mod_update_available(
-        mod,
-        {"enabled": True, "installed_version": "1.0", "ignore_updates": True},
+        {"enabled": False, "installed_version": "1.0"},
         live,
     )
 
@@ -349,6 +360,55 @@ def test_install_mod_direct_file(tmp_path, monkeypatch):
     assert written == ["transmogfix.dll"]
     assert (client / "transmogfix.dll").read_bytes() == payload
     assert mod["_resolved_version"] == "v0.7.0"
+
+
+def test_install_mod_rejects_traversal_dest(tmp_path, monkeypatch):
+    """A crafted dest (catalog-controlled) must not escape the client dir."""
+    client = tmp_path / "client"
+    client.mkdir()
+    mod = {
+        "id": "evil",
+        "source": {
+            "kind": "direct_file",
+            "url": "https://codeberg.org/x/evil.dll",
+            "dest": "../../evil.dll",
+        },
+    }
+    payload = b"DLLDATA"
+    monkeypatch.setattr(
+        mods,
+        "secure_urlopen",
+        lambda *a, **k: type(
+            "R",
+            (),
+            {
+                "__enter__": lambda s: s,
+                "__exit__": lambda *x: False,
+                "read": lambda s=0: payload,
+            },
+        )(),
+    )
+
+    with pytest.raises(RuntimeError, match="unsafe install path"):
+        mods.install_mod(mod, str(client))
+    assert not (tmp_path / "evil.dll").exists()
+    assert not (tmp_path.parent / "evil.dll").exists()
+    assert list(client.iterdir()) == []
+
+
+def test_checked_rel_rejects_traversal_and_absolute():
+    assert mods._checked_rel("mod/mod.dll") == "mod/mod.dll"
+    for bad in (
+        "../evil.dll",
+        "a/../../evil.dll",
+        "/abs/evil.dll",
+        "C:\\evil.dll",
+        "a\x00b.dll",
+        "",
+        None,
+    ):
+        with pytest.raises(RuntimeError, match="unsafe install path"):
+            mods._checked_rel(bad)
 
 
 # ── self-update ─────────────────────────────────────────────────────────────

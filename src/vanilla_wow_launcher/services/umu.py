@@ -254,7 +254,7 @@ def launch(
     proc = subprocess.Popen(
         args,
         cwd=out_dir,
-        env=build_env(proton, game_id, store, renderer),
+        env=build_env(proton, game_id, store, renderer, wayland=wayland),
         start_new_session=True,
         close_fds=True,
     )

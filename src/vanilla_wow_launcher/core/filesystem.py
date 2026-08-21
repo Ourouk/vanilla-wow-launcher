@@ -39,15 +39,6 @@ def cached_sha1(path_str: str, cache: dict) -> str:
         return ""
 
 
-def already_updated(dest, expected_hash) -> bool:
-    if not os.path.exists(dest):
-        return False
-    try:
-        return sha1_file(dest) == expected_hash
-    except Exception:
-        return False
-
-
 def remove_wdb(client_dir: str):
     """Delete the client's WDB folder (server-data cache, safe to drop)."""
     wdb = os.path.join(client_dir, "WDB")

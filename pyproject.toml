@@ -9,6 +9,9 @@ description = "Standalone updater and mod manager for the Vanilla WoW client"
 requires-python = ">=3.10"
 dependencies = [
     "PySide6>=6.6",
+    # certifi supplies a current CA bundle so TLS verification works even on
+    # platforms with a stale/incomplete system root store (e.g. Windows).
+    "certifi>=2024.0",
     # libtorrent only ships wheels for CPython 3.10-3.13; on newer
     # interpreters the client update path degrades to per-file HTTP
     # downloads (services/torrent_download.available()).

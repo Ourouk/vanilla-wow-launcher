@@ -51,14 +51,6 @@ def test_cached_sha1_missing_file_returns_empty(tmp_path):
     assert filesystem.cached_sha1(str(tmp_path / "nope"), {}) == ""
 
 
-def test_already_updated(tmp_path):
-    p = tmp_path / "f.bin"
-    p.write_bytes(b"x")
-    assert filesystem.already_updated(str(p), filesystem.sha1_file(str(p)))
-    assert not filesystem.already_updated(str(p), "A" * 40)
-    assert not filesystem.already_updated(str(tmp_path / "nope"), "A" * 40)
-
-
 def test_ensure_dir_creates_nested(tmp_path):
     d = tmp_path / "a" / "b"
     filesystem.ensure_dir(d)

@@ -501,9 +501,58 @@ def test_allow_through_antivirus_on_windows(controller, monkeypatch):
     controller.state.first_run_av_pending = True
     controller.allow_through_antivirus()
     assert controller.state.first_run_av_pending is False
-    assert shell.calls and "Add-MpPreference" in shell.calls[0][3]
+    assert shell.calls
+    script = _decoded_av_script(shell.calls[0][3])
+    assert "Add-MpPreference -ExclusionPath $p" in script
+    assert "C:/Games/VanillaWoW" not in script
     events = controller._dispatcher.drain()
     assert any("Requested Defender exclusion" in t for t in _log_texts(events))
+
+
+def _decoded_av_script(params: str) -> str:
+    import base64
+
+    blob = params.split("-EncodedCommand ")[1].strip().strip('"')
+    return base64.b64decode(blob).decode("utf-16-le")
+
+
+def test_allow_through_antivirus_quote_in_path_stays_inert(
+    controller, monkeypatch
+):
+    """A path containing quotes/newlines must never break out of the
+    elevated PowerShell invocation (it travels as base64 data)."""
+    import base64
+    import ctypes
+    from types import SimpleNamespace
+
+    class _Shell:
+        def __init__(self):
+            self.calls = []
+
+        def ShellExecuteW(self, *a, **k):
+            self.calls.append(a)
+            return 42
+
+    shell = _Shell()
+    monkeypatch.setattr(
+        sc.platform_support, "can_manage_antivirus", lambda: True
+    )
+    monkeypatch.setattr(
+        ctypes, "windll", SimpleNamespace(shell32=shell), raising=False
+    )
+    evil_path = "C:/Users/O'Brien/Ga'; Start-Process calc.exe; 'mes"
+    controller.state.path = evil_path
+    controller.allow_through_antivirus()
+    assert shell.calls
+    params = shell.calls[0][3]
+    assert "-EncodedCommand" in params
+    assert evil_path not in params
+    script = _decoded_av_script(params)
+    assert "Add-MpPreference -ExclusionPath $p" in script
+    assert evil_path not in script
+    # The raw path only ever appears as the base64 blob inside the script.
+    path_b64 = base64.b64encode(evil_path.encode("utf-8")).decode("ascii")
+    assert f"FromBase64String('{path_b64}')" in script
 
 
 def test_allow_through_antivirus_cancelled(controller, monkeypatch):

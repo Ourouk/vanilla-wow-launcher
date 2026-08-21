@@ -8,11 +8,19 @@ launcher itself only ever writes Config.wtf.
 
 import math
 import os
+import re
 import threading
 
 from ..core.config_store import load_config, update_config
 from ..core.filesystem import ensure_dir
 from ..core.log_sink import log
+
+
+def _wtf_str(v) -> str:
+    """Sanitize a config-derived value for `SET k "v"` lines: quotes,
+    newlines and NULs would let a hostile launcher config inject extra
+    Config.wtf directives."""
+    return re.sub(r'[\r\n\x00"]', "", str(v))
 
 
 def _host_of(url: str) -> str:
@@ -234,6 +242,7 @@ def write_config_wtf(client_dir: str, tweaks: dict | None = None):
     from ..core import launcher
 
     srv = launcher.realm() or _host_of(launcher.server_url()) or "localhost"
+    srv = _wtf_str(srv)
     # The Linux renderer preset (set via the Settings LINUX (UMU) section)
     # selects the client's graphics API. On non-Linux or "auto" we leave
     # gxApi unset so Proton/WoW pick their default.

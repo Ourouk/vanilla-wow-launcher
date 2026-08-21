@@ -18,6 +18,17 @@ from ..core.log_sink import log
 from ..core.security_http import allowed_download_hosts, secure_urlopen
 from . import catalog
 
+
+def _checked_rel(dest_rel) -> str:
+    """Validate a client-dir-relative install target (a release-asset name
+    or a catalog `dest`) before it is joined onto `client_dir`. A
+    compromised mod upstream must not be able to write outside the client
+    folder via a crafted filename (`../../evil.dll`)."""
+    if not catalog.safe_relpath(dest_rel):
+        raise RuntimeError(f"Refusing unsafe install path: {dest_rel!r}")
+    return dest_rel
+
+
 # The per-user custom mod file (a JSON list, one entry per mod, using the
 # same shape the mod catalog uses). Written empty on first use via Settings.
 CUSTOM_FILE_TEMPLATE = "[\n]\n"
@@ -322,7 +333,7 @@ def install_mod(
         ) as r:
             data = r.read()
         if src.get("extract_map") is None:
-            dest_rel = asset["name"]
+            dest_rel = _checked_rel(asset["name"])
             dest = os.path.join(client_dir, dest_rel)
             os.makedirs(os.path.dirname(dest) or client_dir, exist_ok=True)
             with open(dest, "wb") as f:
@@ -380,7 +391,7 @@ def install_mod(
             data = r.read()
 
         if src.get("extract_map") is None:
-            dest_rel = asset["name"]
+            dest_rel = _checked_rel(asset["name"])
             dest = os.path.join(client_dir, dest_rel)
             os.makedirs(os.path.dirname(dest) or client_dir, exist_ok=True)
             with open(dest, "wb") as f:
@@ -501,7 +512,7 @@ def install_mod(
             data = r.read()
 
         if src.get("extract_map") is None:
-            dest_rel = src["dest"]
+            dest_rel = _checked_rel(src["dest"])
             dest = os.path.join(client_dir, dest_rel)
             os.makedirs(os.path.dirname(dest) or client_dir, exist_ok=True)
             with open(dest, "wb") as f:
@@ -634,16 +645,22 @@ def remove_unknown_mod(client_dir: str, name: str):
                 f.write("\n".join(lines) + "\n")
         else:
             os.remove(path)
-    full = os.path.join(client_dir, name)
-    if os.path.exists(full):
-        os.remove(full)
-        log(f"  Removed {name}")
+    # dlls.txt is mod-written, so its entries are untrusted: never resolve
+    # one to a path outside client_dir.
+    if catalog.safe_relpath(name):
+        full = os.path.join(client_dir, name)
+        if os.path.exists(full):
+            os.remove(full)
+            log(f"  Removed {name}")
 
 
 def add_dll(client_dir: str, name: str):
     path = _dlls_txt_path(client_dir)
     lines = open(path).read().splitlines() if os.path.exists(path) else []
     if any(line.strip().lower() == name.lower() for line in lines):
+        return
+    if not catalog.safe_relpath(name.strip()):
+        log(f"  Refusing unsafe dlls.txt entry: {name!r}")
         return
     lines = [line for line in lines if line.strip()] + [name]
     with open(path, "w") as f:
@@ -710,8 +727,6 @@ def mod_update_available(mod: dict, state: dict, live: dict | None) -> bool:
     if not mod_supports_update_check(mod):
         return False
     if not state.get("enabled", False):
-        return False
-    if state.get("ignore_updates", False):
         return False
     installed_ver = state.get("installed_version")
     if not installed_ver:

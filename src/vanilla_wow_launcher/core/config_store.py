@@ -95,6 +95,8 @@ def load_config() -> dict:
 
 def save_config(data: dict):
     with _CONFIG_LOCK:
+        if not config_file:
+            return
         try:
             _atomic_write(config_file, json.dumps(data, indent=2))
         except Exception as e:
@@ -125,7 +127,10 @@ def load_cache() -> dict:
 
 
 def save_cache(cache: dict):
-    try:
-        _atomic_write(cache_file, json.dumps(cache))
-    except Exception as e:
-        sys.stderr.write(f"[cache] failed to write {cache_file}: {e}\n")
+    with _CONFIG_LOCK:
+        if not cache_file:
+            return
+        try:
+            _atomic_write(cache_file, json.dumps(cache))
+        except Exception as e:
+            sys.stderr.write(f"[cache] failed to write {cache_file}: {e}\n")

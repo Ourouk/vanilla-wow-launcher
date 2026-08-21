@@ -42,7 +42,6 @@ hiddenimports += [
     "vanilla_wow_launcher.services.update_backend.http_update",
     "vanilla_wow_launcher.services.update_backend.torrent_update",
     "vanilla_wow_launcher.controllers.addons",
-    "vanilla_wow_launcher.controllers.full_update",
     "vanilla_wow_launcher.controllers.mods",
     "vanilla_wow_launcher.controllers.news",
     "vanilla_wow_launcher.controllers.settings",

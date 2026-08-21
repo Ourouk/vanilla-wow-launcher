@@ -8,6 +8,7 @@ LogMessage and MirrorStatusChanged on the shared EventDispatcher; the Qt
 Settings dialog renders them. No GUI toolkit.
 """
 
+import base64
 import os
 import threading
 import urllib.request
@@ -192,12 +193,18 @@ class SettingsController:
             return
         import ctypes
 
-        cmd = f"Add-MpPreference -ExclusionPath '{client_dir}'"
+        path_b64 = base64.b64encode(client_dir.encode("utf-8")).decode("ascii")
+        cmd = (
+            "$p = [Text.Encoding]::UTF8.GetString("
+            f"[Convert]::FromBase64String('{path_b64}'))\n"
+            "Add-MpPreference -ExclusionPath $p"
+        )
+        encoded = base64.b64encode(cmd.encode("utf-16-le")).decode("ascii")
         r = ctypes.windll.shell32.ShellExecuteW(
             None,
             "runas",
             "powershell.exe",
-            f'-NoProfile -WindowStyle Hidden -Command "{cmd}"',
+            f"-NoProfile -WindowStyle Hidden -EncodedCommand {encoded}",
             None,
             0,
         )

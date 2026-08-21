@@ -55,6 +55,24 @@ def test_update_config_wtf_creates_when_missing(tmp_path):
     assert (client / "WTF" / "Config.wtf").exists()
 
 
+def test_write_config_wtf_sanitizes_hostile_realm(tmp_path, monkeypatch):
+    """Quotes/newlines in a config-supplied realm must not inject extra
+    Config.wtf directives."""
+    monkeypatch.setattr(
+        "vanilla_wow_launcher.core.launcher.realm",
+        lambda: 'evil"\nSET gxApi "opengl',
+    )
+    client = tmp_path / "client"
+    tweaks.write_config_wtf(str(client), tweaks.TWEAKS_DEFAULTS)
+    content = (client / "WTF" / "Config.wtf").read_text(encoding="utf-8")
+    assert 'SET realmList "evilSET gxApi opengl"' in content
+    # Exactly one SET line per key — the injected newline is gone.
+    assert (
+        sum(1 for ln in content.splitlines() if ln.startswith("SET realmList"))
+        == 1
+    )
+
+
 def test_update_config_wtf_updates_existing_values(tmp_path):
     client = tmp_path / "client"
     tweaks.write_config_wtf(str(client), tweaks.TWEAKS_DEFAULTS)
