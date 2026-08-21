@@ -55,6 +55,15 @@ class LinkLabel(ClickableLabel):
         super().mouseReleaseEvent(event)
 
 
+def make_hairline(parent):
+    """A 1px horizontal divider, themed by the global stylesheet's
+    ``QFrame[role="hairline"]`` rule."""
+    line = QFrame(parent)
+    line.setFrameShape(QFrame.HLine)
+    line.setProperty("role", "hairline")
+    return line
+
+
 # ── row chrome ──────────────────────────────────────────────────────────────
 
 
@@ -106,11 +115,7 @@ def add_row_error(root, object_name, error, p):
 
 def add_row_divider(root, p):
     """The hairline between consecutive rows."""
-    divider = QFrame(root.parentWidget())
-    divider.setFrameShape(QFrame.HLine)
-    divider.setStyleSheet(
-        f"background-color: {p.divider.name()}; border: none; max-height: 1px;"
-    )
+    divider = make_hairline(root.parentWidget())
     root.addWidget(divider)
     return divider
 
@@ -160,13 +165,7 @@ class ScrollListPanel(QWidget):
 
     def _add_hsep(self):
         """A hairline divider in the panel's root layout."""
-        p = self._palette
-        sep = QFrame(self)
-        sep.setFrameShape(QFrame.HLine)
-        sep.setStyleSheet(
-            f"background-color: {p.divider.name()};"
-            f" border: none; max-height: 1px;"
-        )
+        sep = make_hairline(self)
         self._root_layout.addWidget(sep)
         return sep
 

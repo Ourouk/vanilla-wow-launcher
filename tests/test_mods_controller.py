@@ -196,12 +196,10 @@ def test_updates_count_matches_apply_semantics(controller, versions, cfg):
         "AlphaMod": {
             "enabled": True,
             "installed_version": "1.0",
-            "ignore_updates": False,
         },
         "BetaMod": {
             "enabled": True,
             "installed_version": "1.0",
-            "ignore_updates": False,
             "error": "download blocked",
         },
     }
@@ -241,20 +239,17 @@ def test_updates_count_uses_mod_update_available(
     assert all(live.get("latest_version") == "2.0" for _, live in calls)
 
 
-# ── toggle / set_ignore ────────────────────────────────────────────────
+# ── toggle ─────────────────────────────────────────────────────────────
 
 
-def test_toggle_and_set_ignore_update_pending(controller):
+def test_toggle_updates_pending(controller):
     assert not controller.state.has_pending_changes
     controller.toggle("AlphaMod", True)
-    controller.set_ignore("AlphaMod", True)
     p = controller.state.pending["AlphaMod"]
     assert p.enabled is True
-    assert p.ignore_updates is True
     assert controller.state.has_pending_changes
     controller.toggle("AlphaMod", False)
     assert controller.state.pending["AlphaMod"].enabled is False
-    assert controller.state.pending["AlphaMod"].ignore_updates is True
 
 
 # ── action_for ─────────────────────────────────────────────────────────
@@ -393,7 +388,6 @@ def test_apply_skips_mods_without_changes(controller, cfg, apply_backends):
             "enabled": True,
             "installed_version": "2.0",
             "installed_files": ["new.dll"],
-            "ignore_updates": True,
         },
     }
     controller.state.records, controller.state.unknown = (

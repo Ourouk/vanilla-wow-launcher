@@ -1,7 +1,6 @@
 """Detailed client update progress panel."""
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QGridLayout,
     QLabel,
@@ -13,6 +12,7 @@ from PySide6.QtWidgets import (
 )
 
 from ...core.helpers import fmt_size, fmt_speed
+from . import metrics
 
 
 class UpdatePanel(QWidget):
@@ -20,6 +20,7 @@ class UpdatePanel(QWidget):
 
     def __init__(self, palette, parent=None):
         super().__init__(parent)
+        self._palette = palette
         self.setObjectName("updatePanel")
         root = QVBoxLayout(self)
         root.setContentsMargins(32, 28, 32, 28)
@@ -29,7 +30,7 @@ class UpdatePanel(QWidget):
         title.setObjectName("updateTitle")
         font = title.font()
         font.setBold(True)
-        font.setPointSize(16)
+        font.setPointSize(metrics.PT_PAGE)
         title.setFont(font)
         title.setStyleSheet(f"color: {palette.gold_lt.name()};")
         root.addWidget(title)
@@ -94,7 +95,7 @@ class UpdatePanel(QWidget):
             item = self._file_list.item(i)
             if item.text() == rel:
                 item.setData(Qt.UserRole, True)
-                item.setForeground(QColor("#2ecc71"))
+                item.setForeground(self._palette.ok)
                 return True
         return False
 
@@ -103,9 +104,11 @@ class UpdatePanel(QWidget):
             self._phase.setText(event.phase)
         elif event.label:
             self._phase.setText("Working")
-        self._progress.setValue(
-            int(round(max(0.0, min(1.0, event.value)) * 100))
-        )
+        value = int(round(max(0.0, min(1.0, event.value)) * 100))
+        self._progress.setValue(value)
+        # Same visibility rule as the footer mini-bar: only visible while
+        # something is actually in flight (0 < progress < 100).
+        self._progress.setVisible(0 < value < 100)
         if event.current_file or event.label:
             self._file.setText(event.current_file or event.label)
         self._transport.setText(event.transport or "-")
@@ -126,7 +129,7 @@ class UpdatePanel(QWidget):
             if not self._set_file_done(txt) and not self._has_file(txt):
                 item = QListWidgetItem(txt)
                 item.setData(Qt.UserRole, True)
-                item.setForeground(QColor("#2ecc71"))
+                item.setForeground(self._palette.ok)
                 self._file_list.addItem(item)
 
     def status_changed(self, text: str):
@@ -139,6 +142,7 @@ class UpdatePanel(QWidget):
 
     def operation_finished(self, kind: str, ok: bool, message: str):
         if kind in ("update", "verify"):
+            self._progress.setVisible(False)
             if ok:
                 self._phase.setText(
                     "Verified" if kind == "verify" else "Complete"
@@ -146,7 +150,7 @@ class UpdatePanel(QWidget):
                 for i in range(self._file_list.count()):
                     item = self._file_list.item(i)
                     item.setData(Qt.UserRole, True)
-                    item.setForeground(QColor("#2ecc71"))
+                    item.setForeground(self._palette.ok)
             else:
                 self._phase.setText(
                     "Update required" if kind == "verify" else "Failed"
@@ -160,5 +164,6 @@ class UpdatePanel(QWidget):
 
     def operation_failed(self, kind: str, message: str):
         if kind in ("update", "verify"):
+            self._progress.setVisible(False)
             self._phase.setText("Failed")
             self._file.setText(message or "Update failed.")

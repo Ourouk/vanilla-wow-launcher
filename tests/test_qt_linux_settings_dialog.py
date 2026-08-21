@@ -76,17 +76,17 @@ def test_linux_dialog_present_on_linux(qapp, window, monkeypatch):
     _, linux = _open_linux(window, monkeypatch)
     for name in (
         "linuxSettingsTitle",
-        "settingsProton",
-        "settingsProtonApply",
-        "settingsRenderer",
-        "settingsRendererApply",
-        "settingsGamemode",
-        "settingsWayland",
-        "settingsUmuGameId",
-        "settingsUmuPath",
-        "settingsUmuBrowse",
-        "settingsUmuPathApply",
-        "settingsUmuHint",
+        "linuxSettingsProton",
+        "linuxSettingsProtonApply",
+        "linuxSettingsRenderer",
+        "linuxSettingsRendererApply",
+        "linuxSettingsGamemode",
+        "linuxSettingsWayland",
+        "linuxSettingsUmuGameId",
+        "linuxSettingsUmuPath",
+        "linuxSettingsUmuBrowse",
+        "linuxSettingsUmuPathApply",
+        "linuxSettingsUmuHint",
     ):
         assert linux.findChild(QWidget, name) is not None, name
 
@@ -99,10 +99,10 @@ def test_gamemode_disabled_when_not_installed(qapp, window, monkeypatch):
         lambda: {"gamemode_available": False, "wayland_session": True},
     )
     _, linux = _open_linux(window, monkeypatch)
-    check = linux.findChild(QCheckBox, "settingsGamemode")
+    check = linux.findChild(QCheckBox, "linuxSettingsGamemode")
     assert check is not None
     assert check.isEnabled() is False
-    assert linux.findChild(QLabel, "settingsGamemodeHint") is not None
+    assert linux.findChild(QLabel, "linuxSettingsGamemodeHint") is not None
 
 
 def test_wayland_disabled_when_not_on_wayland(qapp, window, monkeypatch):
@@ -113,10 +113,10 @@ def test_wayland_disabled_when_not_on_wayland(qapp, window, monkeypatch):
         lambda: {"gamemode_available": True, "wayland_session": False},
     )
     _, linux = _open_linux(window, monkeypatch)
-    check = linux.findChild(QCheckBox, "settingsWayland")
+    check = linux.findChild(QCheckBox, "linuxSettingsWayland")
     assert check is not None
     assert check.isEnabled() is False
-    assert linux.findChild(QLabel, "settingsWaylandHint") is not None
+    assert linux.findChild(QLabel, "linuxSettingsWaylandHint") is not None
 
 
 def test_gamemode_and_wayland_enabled_when_available(
@@ -129,8 +129,12 @@ def test_gamemode_and_wayland_enabled_when_available(
         lambda: {"gamemode_available": True, "wayland_session": True},
     )
     _, linux = _open_linux(window, monkeypatch)
-    assert linux.findChild(QCheckBox, "settingsGamemode").isEnabled() is True
-    assert linux.findChild(QCheckBox, "settingsWayland").isEnabled() is True
+    assert (
+        linux.findChild(QCheckBox, "linuxSettingsGamemode").isEnabled() is True
+    )
+    assert (
+        linux.findChild(QCheckBox, "linuxSettingsWayland").isEnabled() is True
+    )
 
 
 # ── field apply handlers ─────────────────────────────────────────────────
@@ -139,7 +143,9 @@ def test_gamemode_and_wayland_enabled_when_available(
 def test_umu_hint_reports_missing_binary(qapp, window, monkeypatch):
     monkeypatch.setattr(window._hub.settings, "resolve_umu_binary", lambda: "")
     _, linux = _open_linux(window, monkeypatch)
-    assert "not found" in linux.findChild(QLabel, "settingsUmuHint").text()
+    assert (
+        "not found" in linux.findChild(QLabel, "linuxSettingsUmuHint").text()
+    )
 
 
 def test_umu_proton_apply_calls_setter(qapp, window, monkeypatch):
@@ -152,10 +158,10 @@ def test_umu_proton_apply_calls_setter(qapp, window, monkeypatch):
         lambda: ["GE-Proton9-4", "UMU-Proton"],
     )
     _, linux = _open_linux(window, monkeypatch)
-    combo = linux.findChild(QComboBox, "settingsProton")
+    combo = linux.findChild(QComboBox, "linuxSettingsProton")
     combo.setCurrentText("GE-Proton9-4")
     QTest.mouseClick(
-        linux.findChild(QPushButton, "settingsProtonApply"), Qt.LeftButton
+        linux.findChild(QPushButton, "linuxSettingsProtonApply"), Qt.LeftButton
     )
     set_proton.assert_called_once_with("GE-Proton9-4")
 
@@ -165,10 +171,11 @@ def test_umu_renderer_apply_calls_setter(qapp, window, monkeypatch):
     set_renderer = Mock()
     monkeypatch.setattr(hub.settings, "set_umu_renderer", set_renderer)
     _, linux = _open_linux(window, monkeypatch)
-    combo = linux.findChild(QComboBox, "settingsRenderer")
+    combo = linux.findChild(QComboBox, "linuxSettingsRenderer")
     combo.setCurrentText("WineD3D (OpenGL)")
     QTest.mouseClick(
-        linux.findChild(QPushButton, "settingsRendererApply"), Qt.LeftButton
+        linux.findChild(QPushButton, "linuxSettingsRendererApply"),
+        Qt.LeftButton,
     )
     set_renderer.assert_called_once_with("wined3d-opengl")
 
@@ -180,7 +187,7 @@ def test_umu_proton_preserves_unlisted_custom_value(qapp, window, monkeypatch):
     )
     hub.settings.launch.umu_proton = "/custom/proton"
     _, linux = _open_linux(window, monkeypatch)
-    combo = linux.findChild(QComboBox, "settingsProton")
+    combo = linux.findChild(QComboBox, "linuxSettingsProton")
     assert combo.currentText() == "/custom/proton"
     assert "/custom/proton" in [
         combo.itemText(i) for i in range(combo.count())
@@ -197,7 +204,7 @@ def test_umu_gamemode_toggle_calls_setter(qapp, window, monkeypatch):
         lambda: {"gamemode_available": True, "wayland_session": True},
     )
     _, linux = _open_linux(window, monkeypatch)
-    check = linux.findChild(QCheckBox, "settingsGamemode")
+    check = linux.findChild(QCheckBox, "linuxSettingsGamemode")
     check.setChecked(False)
     set_gamemode.assert_called_once_with(False)
 
@@ -212,7 +219,7 @@ def test_umu_wayland_toggle_calls_setter(qapp, window, monkeypatch):
         lambda: {"gamemode_available": True, "wayland_session": True},
     )
     _, linux = _open_linux(window, monkeypatch)
-    check = linux.findChild(QCheckBox, "settingsWayland")
+    check = linux.findChild(QCheckBox, "linuxSettingsWayland")
     check.setChecked(False)
     set_wayland.assert_called_once_with(False)
 
@@ -222,10 +229,11 @@ def test_umu_gameid_apply_calls_setter(qapp, window, monkeypatch):
     set_gameid = Mock()
     monkeypatch.setattr(hub.settings, "set_umu_game_id", set_gameid)
     _, linux = _open_linux(window, monkeypatch)
-    edit = linux.findChild(QLineEdit, "settingsUmuGameId")
+    edit = linux.findChild(QLineEdit, "linuxSettingsUmuGameId")
     edit.setText("umu-custom")
     QTest.mouseClick(
-        linux.findChild(QPushButton, "settingsUmuGameIdApply"), Qt.LeftButton
+        linux.findChild(QPushButton, "linuxSettingsUmuGameIdApply"),
+        Qt.LeftButton,
     )
     set_gameid.assert_called_once_with("umu-custom")
 
@@ -235,10 +243,11 @@ def test_umu_path_apply_calls_setter(qapp, window, monkeypatch):
     set_path = Mock()
     monkeypatch.setattr(hub.settings, "set_umu_binary_path", set_path)
     _, linux = _open_linux(window, monkeypatch)
-    edit = linux.findChild(QLineEdit, "settingsUmuPath")
+    edit = linux.findChild(QLineEdit, "linuxSettingsUmuPath")
     edit.setText("/opt/umu-run")
     QTest.mouseClick(
-        linux.findChild(QPushButton, "settingsUmuPathApply"), Qt.LeftButton
+        linux.findChild(QPushButton, "linuxSettingsUmuPathApply"),
+        Qt.LeftButton,
     )
     set_path.assert_called_once_with("/opt/umu-run")
 
@@ -253,6 +262,6 @@ def test_umu_browse_sets_binary_path(qapp, window, monkeypatch, tmp_path):
     )
     _, linux = _open_linux(window, monkeypatch)
     QTest.mouseClick(
-        linux.findChild(QPushButton, "settingsUmuBrowse"), Qt.LeftButton
+        linux.findChild(QPushButton, "linuxSettingsUmuBrowse"), Qt.LeftButton
     )
     set_path.assert_called_once_with(chosen)

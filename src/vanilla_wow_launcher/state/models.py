@@ -61,7 +61,7 @@ class NewsState:
 @dataclass
 class ModState:
     """One per-mod config record ("mods" key): enabled, installed_version,
-    installed_files, ignore_updates, error.
+    installed_files, error.
 
     ``present`` is the session-computed filesystem-truth flag (files on disk +
     dlls.txt registration); it is not a config key.
@@ -70,7 +70,6 @@ class ModState:
     enabled: bool = False
     installed_version: str | None = None
     installed_files: list = field(default_factory=list)
-    ignore_updates: bool = False
     error: str | None = None
     present: bool = False
 
@@ -84,7 +83,6 @@ class ModPending:
     """One not-yet-applied checkbox change from _mod_pending_state."""
 
     enabled: bool | None = None
-    ignore_updates: bool | None = None
 
 
 @dataclass

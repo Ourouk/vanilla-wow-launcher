@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
 
 from ...controllers.tweaks import TweaksController
 from ...services.tweaks import TWEAKS_DEFAULTS, TWEAKS_ITEMS, TWEAKS_LIMITS
+from .list_panel import make_hairline
 from .theme import Palette
 
 
@@ -104,18 +105,11 @@ class TweaksPanel(QWidget):
             if kind == "section":
                 hdr = QLabel(label, self._content)
                 hdr.setObjectName(f"tweaksSection_{tid}")
-                hdr.setStyleSheet(
-                    f"color: {p.gold.name()}; font-weight: bold;"
-                )
+                hdr.setProperty("role", "sectionTitle")
                 self._form.addWidget(hdr)
                 self._form.addSpacing(2)
-                sep = QFrame(self._content)
+                sep = make_hairline(self._content)
                 sep.setObjectName(f"tweaksSection_{tid}_separator")
-                sep.setFrameShape(QFrame.HLine)
-                sep.setStyleSheet(
-                    f"background-color: {p.divider.name()};"
-                    f" border: none; max-height: 1px;"
-                )
                 self._form.addWidget(sep)
                 self._form.addSpacing(4)
                 continue
@@ -166,12 +160,7 @@ class TweaksPanel(QWidget):
 
     def _build_footer(self):
         p = self._palette
-        sep = QFrame(self)
-        sep.setFrameShape(QFrame.HLine)
-        sep.setStyleSheet(
-            f"background-color: {p.divider.name()};"
-            f" border: none; max-height: 1px;"
-        )
+        sep = make_hairline(self)
         self.layout().addWidget(sep)
 
         footer = QWidget(self)

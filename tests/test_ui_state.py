@@ -140,13 +140,11 @@ def test_mod_state_record():
         enabled=True,
         installed_version="2.0.1",
         installed_files=["d3d9.dll"],
-        ignore_updates=False,
         error=None,
     )
     assert rec.enabled is True
     assert rec.installed_version == "2.0.1"
     assert rec.installed_files == ["d3d9.dll"]
-    assert rec.ignore_updates is False
     assert rec.error is None
     assert rec.has_error is False
 
@@ -159,10 +157,6 @@ def test_mod_state_error_flag():
 def test_mod_pending_partial_change():
     p = ModPending(enabled=True)
     assert p.enabled is True
-    assert p.ignore_updates is None
-    q = ModPending(ignore_updates=True)
-    assert q.enabled is None
-    assert q.ignore_updates is True
 
 
 def test_mods_state_construction():

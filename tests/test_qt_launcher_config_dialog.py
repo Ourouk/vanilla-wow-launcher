@@ -158,6 +158,17 @@ def test_empty_servers_shows_offline_status_and_disables_list(qapp):
         dlg.close()
 
 
+def _wait_until(qapp, cond, timeout_ms=4000):
+    """Pump the event loop until `cond()` is true (async fetch polling)."""
+    deadline = __import__("time").monotonic() + timeout_ms / 1000
+    while not cond():
+        if __import__("time").monotonic() > deadline:
+            return False
+        qapp.processEvents()
+        __import__("time").sleep(0.01)
+    return True
+
+
 def test_server_selection_accepts_remote(qapp, monkeypatch):
     import vanilla_wow_launcher.core.launcher as launcher_mod
     import vanilla_wow_launcher.services.server_index as server_index_module
@@ -183,7 +194,10 @@ def test_server_selection_accepts_remote(qapp, monkeypatch):
         dlg._list.setCurrentItem(dlg._list.item(0))
         assert dlg._list.item(0).isSelected()
         dlg.findChild(QPushButton, "launcherConfigOk").click()
-        assert dlg.result() == QDialog.DialogCode.Accepted
+        assert _wait_until(
+            qapp,
+            lambda: dlg.result() == QDialog.DialogCode.Accepted,
+        )
         sel = dlg.selection()
         assert sel is not None
         assert sel["kind"] == "remote"
@@ -214,12 +228,55 @@ def test_remote_fetch_failure_shows_error(qapp, monkeypatch):
     )
     dlg = LauncherConfigDialog(servers=servers)
     dlg.show()
+    error = dlg.findChild(QLabel, "launcherConfigError")
     try:
         dlg._list.setCurrentItem(dlg._list.item(0))
         dlg.findChild(QPushButton, "launcherConfigOk").click()
+        assert _wait_until(qapp, lambda: error.isVisible() and error.text())
         assert dlg.result() != QDialog.DialogCode.Accepted
-        error = dlg.findChild(QLabel, "launcherConfigError")
-        assert error.isVisible()
-        assert error.text()
+    finally:
+        dlg.close()
+
+
+def test_cancel_during_fetch_never_accepts(qapp, monkeypatch):
+    """A fetch result arriving after Cancel must not re-accept the dialog."""
+    import threading
+    import time as time_mod
+
+    import vanilla_wow_launcher.services.server_index as server_index_module
+
+    release = threading.Event()
+
+    def slow_fetch(url):
+        release.wait(2)
+        return ({"server": {}}, "{}", "")
+
+    monkeypatch.setattr(server_index_module, "fetch_server_config", slow_fetch)
+    servers = [
+        {
+            "id": "octowow",
+            "name": "OctoWoW",
+            "config_url": "https://example.invalid/octowow.json",
+        }
+    ]
+    dlg = LauncherConfigDialog(servers=servers)
+    dlg.show()
+    try:
+        dlg._list.setCurrentItem(dlg._list.item(0))
+        dlg.findChild(QPushButton, "launcherConfigOk").click()
+        # Fetch in flight: give the worker a moment, then cancel.
+        deadline = time_mod.monotonic() + 0.2
+        while time_mod.monotonic() < deadline:
+            qapp.processEvents()
+            time_mod.sleep(0.01)
+        dlg.reject()
+        release.set()
+        # Pump long enough for the fetch to finish and the poll to fire.
+        deadline = time_mod.monotonic() + 1.0
+        while time_mod.monotonic() < deadline:
+            qapp.processEvents()
+            time_mod.sleep(0.01)
+        assert dlg.result() != QDialog.DialogCode.Accepted
+        assert dlg.selection() is None
     finally:
         dlg.close()

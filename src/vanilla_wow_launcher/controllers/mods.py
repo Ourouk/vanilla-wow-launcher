@@ -1,7 +1,7 @@
 """Mods panel controller.
 
 Owns the MODS-panel business logic: the background latest-version fetch, the
-update-available count, the pending checkbox/ignore changes, and the
+update-available count, the pending checkbox changes, and the
 install/uninstall/update worker. Publishes snapshots as ModsLoaded and the
 worker outcome as OperationFinished on the shared EventDispatcher; the Qt
 Mods panel renders them. No GUI toolkit.
@@ -104,11 +104,6 @@ class ModsController:
     def toggle(self, mod_id: str, enabled: bool):
         self.state.pending.setdefault(mod_id, ModPending()).enabled = enabled
 
-    def set_ignore(self, mod_id: str, ignore_updates: bool):
-        self.state.pending.setdefault(
-            mod_id, ModPending()
-        ).ignore_updates = ignore_updates
-
     def action_for(self, mod_id: str) -> str | None:
         """'retry' when the mod is in an error state, 'update' when a newer
         version is available, else None."""
@@ -207,7 +202,6 @@ class ModsController:
                 enabled=rec.get("enabled", False),
                 installed_version=rec.get("installed_version"),
                 installed_files=list(rec.get("installed_files", [])),
-                ignore_updates=rec.get("ignore_updates", False),
                 error=rec.get("error"),
             )
         out = (self._get_out_dir() or "").strip()
@@ -249,7 +243,6 @@ class ModsController:
                 "enabled": True,
                 "installed_version": None,
                 "installed_files": declared,
-                "ignore_updates": False,
                 "error": None,
             }
         if adopted:
@@ -269,7 +262,6 @@ class ModsController:
             "enabled": rec.enabled,
             "installed_version": rec.installed_version,
             "installed_files": rec.installed_files,
-            "ignore_updates": rec.ignore_updates,
             "error": rec.error,
         }
 
@@ -314,7 +306,7 @@ class ModsController:
                     continue
                 state = mods_cfg.get(mid, {})
 
-                # Read enabled/ignore from pending UI changes first, fall back
+                # Read enabled from pending UI changes first, fall back
                 # to saved config. No registry-default fallback here: a mod is
                 # only ever "enabled" because the user (or the one-time
                 # default-mods seed) explicitly said so.
@@ -323,11 +315,6 @@ class ModsController:
                     pend.enabled
                     if pend is not None and pend.enabled is not None
                     else state.get("enabled", False)
-                )
-                ignore_upd = (
-                    pend.ignore_updates
-                    if pend is not None and pend.ignore_updates is not None
-                    else state.get("ignore_updates", False)
                 )
 
                 # A targeted single-mod update/retry always means "install this
@@ -346,7 +333,7 @@ class ModsController:
                 needs_uninstall = not enabled and is_installed
 
                 needs_version_lookup = needs_install or (
-                    enabled and is_installed and not ignore_upd
+                    enabled and is_installed
                 )
                 latest_ver = None
                 mod_release = None
@@ -373,7 +360,6 @@ class ModsController:
                     is_installed
                     and latest_ver is not None
                     and latest_ver != installed_ver
-                    and not ignore_upd
                 )
                 needs_update = enabled and update_avail
 
@@ -382,7 +368,6 @@ class ModsController:
                         mods_cfg.setdefault(mid, {}).update(
                             {
                                 "enabled": enabled,
-                                "ignore_updates": ignore_upd,
                             }
                         )
                     # A previously failed mod that the user leaves disabled on
@@ -424,7 +409,6 @@ class ModsController:
                             "enabled": True,
                             "installed_version": resolved_ver,
                             "installed_files": written,
-                            "ignore_updates": ignore_upd,
                             "error": None,
                         }
                         if mid == "dxvk":
@@ -444,7 +428,6 @@ class ModsController:
                             "enabled": False,
                             "installed_version": None,
                             "installed_files": [],
-                            "ignore_updates": ignore_upd,
                             "error": None,
                         }
                         self._dispatcher.post(
@@ -468,7 +451,6 @@ class ModsController:
                             "enabled": True,
                             "installed_version": latest_ver,
                             "installed_files": written,
-                            "ignore_updates": ignore_upd,
                             "error": None,
                         }
                         if mid == "dxvk":
@@ -486,7 +468,6 @@ class ModsController:
                         "enabled": False,
                         "installed_version": None,
                         "installed_files": [],
-                        "ignore_updates": ignore_upd,
                         "error": err,
                     }
 

@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QPushButton,
+    QToolButton,
     QWidget,
 )
 
@@ -128,9 +129,9 @@ def test_panel_replaces_the_addons_placeholder(qapp, window):
     assert panel.objectName() == "addonsPanel"
     assert panel.scroll.objectName() == "addonsScroll"
     assert panel.findChild(QLineEdit, "addonsFilter") is not None
-    assert panel.findChild(QLabel, "addonsCheck") is not None
-    assert panel.findChild(QLabel, "addonsCustom") is not None
-    assert panel.findChild(QLabel, "addonsFooter") is not None
+    assert panel.findChild(QToolButton, "addonsCheck") is not None
+    assert panel.findChild(QToolButton, "addonsCustom") is not None
+    assert panel.findChild(QToolButton, "addonsFooter") is not None
     assert panel.findChild(QPushButton, "addonsApply") is not None
     # Both collapsible sections render.
     assert panel.findChild(QWidget, "addonsSection_INSTALLED") is not None
@@ -288,7 +289,7 @@ def test_filter_matches_title_space_insensitively(qapp, window, hub):
 
 def test_footer_states_follow_snapshots(qapp, window, hub):
     panel = _panel(window)
-    footer = panel.findChild(QLabel, "addonsFooter")
+    footer = panel.findChild(QToolButton, "addonsFooter")
     assert footer.text() == "Everything up to date"
     assert not footer.isEnabled()
 
@@ -303,7 +304,7 @@ def test_footer_states_follow_snapshots(qapp, window, hub):
 
 def test_check_for_updates_shows_busy_state(qapp, window, hub, monkeypatch):
     panel = _panel(window)
-    footer = panel.findChild(QLabel, "addonsFooter")
+    footer = panel.findChild(QToolButton, "addonsFooter")
 
     def fake_verify(force=False, remote_checks=True):
         hub.addons.state.busy = True
@@ -311,7 +312,7 @@ def test_check_for_updates_shows_busy_state(qapp, window, hub, monkeypatch):
         return True
 
     monkeypatch.setattr(hub.addons, "verify", fake_verify)
-    check = panel.findChild(QLabel, "addonsCheck")
+    check = panel.findChild(QToolButton, "addonsCheck")
     QTest.mouseClick(check, Qt.LeftButton)
     assert footer.text() == "Checking…"
 

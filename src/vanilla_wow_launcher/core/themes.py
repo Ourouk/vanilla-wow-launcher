@@ -41,6 +41,10 @@ DEFAULT_COLORS = {
     "C_PARCH_DIM": "#8b8064",
     "C_PARCH_LINK": "#a3561c",
     "C_PARCH_EDGE": "#b7a678",
+    "C_PINK": "#d76f9e",
+    "C_PINK_LT": "#eb96ba",
+    "C_WARN": "#d4b43c",
+    "C_BTN_TEXT": "#ffffff",
 }
 
 # The color slots a theme may set — exactly the default theme's keys.

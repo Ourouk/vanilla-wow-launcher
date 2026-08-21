@@ -29,23 +29,14 @@ from PySide6.QtWidgets import (
 
 from ...controllers.settings import SettingsController
 from ...core import launcher, platform_support
+from . import metrics
 from .bridge import ControllerBridge
 from .linux_settings_dialog import LinuxSettingsDialog
+from .list_panel import ClickableLabel, make_hairline
 from .theme import Palette, theme_qss
 
 KO_FI_URL = "https://ko-fi.com/rebased"
 BMC_URL = "https://buymeacoffee.com/rebased"
-
-
-class _ClickableLabel(QLabel):
-    """A QLabel that emits clicked on a left mouse release."""
-
-    clicked = Signal()
-
-    def mouseReleaseEvent(self, event):
-        if event.button() == Qt.LeftButton:
-            self.clicked.emit()
-        super().mouseReleaseEvent(event)
 
 
 class _ClickableRow(QWidget):
@@ -152,21 +143,15 @@ class SettingsDialog(QDialog):
 
         title = QLabel("SETTINGS", hdr)
         title.setStyleSheet(
-            f"color: {p.purple.name()}; font-weight: bold; font-size: 13pt;"
+            f"color: {p.purple.name()}; font-weight: bold;"
+            f" font-size: {metrics.PT_DIALOG}pt;"
         )
         layout.addWidget(title)
         layout.addStretch(1)
         return hdr
 
     def _build_divider(self) -> QFrame:
-        p = self._palette
-        sep = QFrame(self)
-        sep.setFrameShape(QFrame.HLine)
-        sep.setStyleSheet(
-            f"background-color: {p.panel_bdr.name()};"
-            f" border: none; max-height: 1px;"
-        )
-        return sep
+        return make_hairline(self)
 
     def _build_body(self) -> QWidget:
         p = self._palette
@@ -182,7 +167,7 @@ class SettingsDialog(QDialog):
         )
         folder_row.addWidget(folder_label)
         folder_row.addStretch(1)
-        open_link = _ClickableLabel("Open folder", body)
+        open_link = ClickableLabel("Open folder", body)
         open_link.setObjectName("settingsOpenFolder")
         open_link.setCursor(Qt.PointingHandCursor)
         open_link.setStyleSheet(f"color: {p.text_dim.name()}; font-size: 9pt;")
@@ -493,13 +478,13 @@ class SettingsDialog(QDialog):
 
         links = QHBoxLayout()
         links.addSpacing(64)
-        open_link = _ClickableLabel("Open custom file", self)
+        open_link = ClickableLabel("Open custom file", self)
         open_link.setObjectName(f"{prefix}RegistryOpenCustom")
         open_link.setCursor(Qt.PointingHandCursor)
         open_link.setStyleSheet(f"color: {p.gold.name()}; font-size: 9pt;")
         open_link.clicked.connect(on_open_custom)
         links.addWidget(open_link)
-        clear_link = _ClickableLabel("Clear custom entries", self)
+        clear_link = ClickableLabel("Clear custom entries", self)
         clear_link.setObjectName(f"{prefix}RegistryClearCustom")
         clear_link.setCursor(Qt.PointingHandCursor)
         clear_link.setStyleSheet(f"color: {p.err.name()}; font-size: 9pt;")

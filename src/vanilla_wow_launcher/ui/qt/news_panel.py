@@ -6,8 +6,6 @@ the dark panel. Both render the `NewsLoaded` events the ControllerBridge
 forwards and keep their state so switching tabs preserves the content.
 """
 
-import webbrowser
-
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QTextOption
 from PySide6.QtWidgets import (
@@ -24,35 +22,12 @@ from PySide6.QtWidgets import (
 
 from ...core.helpers import format_news_date, strip_html
 from ...state.events import NewsLoaded
+from .list_panel import LinkLabel, clear_layout, make_hairline
 
 _LOADING = "Loading…"
 _ERROR = "Couldn't reach the news feed."
 _EMPTY = "No news yet — check back later."
 _BODY_LIMIT = 260
-
-
-class _LinkLabel(QLabel):
-    """A QLabel that opens a URL on left-click."""
-
-    def __init__(self, text, url, parent=None):
-        super().__init__(text, parent)
-        self._url = url
-        self.setCursor(Qt.PointingHandCursor)
-
-    def mouseReleaseEvent(self, event):
-        if event.button() == Qt.LeftButton and self._url:
-            webbrowser.open(self._url)
-        super().mouseReleaseEvent(event)
-
-
-def _clear_layout(layout):
-    """Drop every widget a layout owns so a re-render can rebuild the list."""
-    while layout.count():
-        item = layout.takeAt(0)
-        widget = item.widget()
-        if widget is not None:
-            widget.setParent(None)
-            widget.deleteLater()
 
 
 class FeaturedPanel(QWidget):
@@ -126,9 +101,7 @@ class FeaturedPanel(QWidget):
         self.body.setWordWrapMode(QTextOption.WordWrap)
         self.body.setFrameShape(QFrame.NoFrame)
 
-        self.link_label = _LinkLabel(
-            "⧉  Read full post on the forum", "", self
-        )
+        self.link_label = LinkLabel("⧉  Read full post on the forum", "", self)
         self.link_label.setObjectName("featuredLink")
 
         layout = QVBoxLayout(self)
@@ -222,13 +195,8 @@ class AnnouncementsPanel(QWidget):
         )
         header_layout.addWidget(self.refresh_button)
 
-        divider = QFrame(self)
+        divider = make_hairline(self)
         divider.setObjectName("announcementsDivider")
-        divider.setFrameShape(QFrame.HLine)
-        divider.setStyleSheet(
-            f"#announcementsDivider {{ background-color: {p.divider.name()};"
-            f" border: none; max-height: 1px; }}"
-        )
 
         self.status_label = QLabel("", self)
         self.status_label.setObjectName("announcementsStatus")
@@ -275,7 +243,7 @@ class AnnouncementsPanel(QWidget):
             self.scroll.hide()
             return
 
-        _clear_layout(self._list_layout)
+        clear_layout(self._list_layout)
         for i, item in enumerate(items):
             row = QWidget(self._list)
             row.setObjectName(f"announcement_{i}")
@@ -316,18 +284,12 @@ class AnnouncementsPanel(QWidget):
                 row_layout.addWidget(body_label)
 
             if item.get("url"):
-                link = _LinkLabel("⧉ Read more", item["url"], row)
+                link = LinkLabel("⧉ Read more", item["url"], row)
                 link.setObjectName(f"announcement_{i}_link")
                 row_layout.addWidget(link)
 
-            separator = QFrame(row)
+            separator = make_hairline(row)
             separator.setObjectName(f"announcement_{i}_separator")
-            separator.setFrameShape(QFrame.HLine)
-            separator.setStyleSheet(
-                f"#announcement_{i}_separator {{ background-color:"
-                f" {self._palette.divider.name()};"
-                f" border: none; max-height: 1px; }}"
-            )
             row_layout.addWidget(separator)
 
             self._list_layout.addWidget(row)

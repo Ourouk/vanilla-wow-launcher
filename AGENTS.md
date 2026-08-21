@@ -152,9 +152,12 @@ src/vanilla_wow_launcher/
   `umu_wayland`, `umu_binary_path`, `umu_game_id`. They render in a **dedicated
   `LinuxSettingsDialog`** (`ui/qt/linux_settings_dialog.py`) opened by the
   "Linux (UMU) Settings…" button in the main Settings dialog — *not* a section of
-  it. Renderer maps to `PROTON_DXVK_D3D8`/`PROTON_USE_WINED3D` env vars and the
+  it.   Renderer maps to `PROTON_DXVK_D3D8`/`PROTON_USE_WINED3D` env vars and the
   `Config.wtf` `gxApi`; GameMode wraps launch in `gamemoderun` (only if
-  installed); Wayland sets `PROTON_ENABLE_WAYLAND=1` (only on a Wayland session).
+  installed); Wayland sets `PROTON_ENABLE_WAYLAND=1` when the `umu_wayland`
+  setting is true — `controllers/update.py` passes it as `launch(wayland=...)`,
+  and `umu.launch` forwards it to `build_env` (it was silently dropped before
+  the 2026-08-21 fix).
   Tests patch the FULL path, e.g. `"vanilla_wow_launcher.services.umu.launch"`
   (the controller imports the umu module lazily inside the launch method).
 - **One game process at a time**: `umu.launch()` returns `(pid, pgid, proc)`;
@@ -230,3 +233,16 @@ Keep them in sync when bumping.
   via `dialog.close()` (see `test_qt_settings_dialog.py` /
   `test_qt_smoke.py`). The main `SettingsDialog` and `LinuxSettingsDialog`
   follow this.
+- **UI conventions (2026-08-21 refresh)**: button language is all-caps for
+  primary/global actions (`UPDATE`/`PLAY`, nav tabs) and Title Case for panel
+  actions ("Apply", "Retry") — map controller machine strings to labels in the
+  UI layer, never render raw `"retry"`/`"update"`. Recurring button looks come
+  from QSS variants — `setProperty("variant", "primary"|"positive"|"outline"|`
+  `"compact")` styled by `theme_qss` — not per-widget stylesheets. Dividers are
+  `list_panel.make_hairline()`; section titles set `role="sectionTitle"`. Point
+  sizes and paddings use the tokens in `ui/qt/metrics.py` (PT_*/PAD_*) — no ad
+  hoc sizes. All palette colors (incl. pink/warn/btn_text) are themable slots
+  in `core/themes.py`; never hardcode hex in widgets. Icon-only controls get a
+  tooltip + `setAccessibleName`. The LinuxSettingsDialog uses the
+  `linuxSettings*` objectName prefix (tests assert it). Footer pseudo-actions
+  are real `QToolButton`s, not clickable labels.

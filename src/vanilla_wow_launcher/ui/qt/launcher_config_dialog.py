@@ -10,8 +10,9 @@ chosen selection is exposed via ``selection()`` as
 """
 
 import os
+import threading
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QDialog,
     QFileDialog,
@@ -47,6 +48,7 @@ class LauncherConfigDialog(QDialog):
         self._servers = list(servers or [])
         self._selected_path = ""
         self._selection = None
+        self._fetching = False
         self.setObjectName("launcherConfigDialog")
         self.setWindowTitle("FIRST LAUNCH — CHOOSE A SERVER")
         self.setMinimumWidth(560)
@@ -153,6 +155,11 @@ class LauncherConfigDialog(QDialog):
 
     # ── interaction ──────────────────────────────────────────────────────
 
+    def reject(self):
+        # A late fetch result must not re-accept a cancelled dialog.
+        self._fetching = False
+        super().reject()
+
     def browse(self):
         current = self._path.text()
         start_dir = os.path.dirname(current) if current else os.getcwd()
@@ -220,31 +227,73 @@ class LauncherConfigDialog(QDialog):
         self.accept()
 
     def _submit_remote(self, server: dict):
+        """Fetch and validate the server config on a worker thread — the
+        GUI thread must never block on network I/O. A poll timer applies
+        the result on the main thread once the fetch finishes."""
         self._clear_error()
-        from PySide6.QtWidgets import QApplication
+        self._fetching = True
+        ok = self.findChild(QPushButton, "launcherConfigOk")
+        if ok is not None:
+            ok.setEnabled(False)
+        self._list.setEnabled(False)
+        name = server.get("name") or "server"
+        self._status.setText(f"Fetching the {name} configuration…")
 
-        QApplication.setOverrideCursor(Qt.WaitCursor)
-        try:
-            data, raw, err = server_index.fetch_server_config(
-                server["config_url"]
-            )
-            if err:
-                self._show_error(err)
-                return
-            config, verr = launcher.validate_dict(data)
-            if config is None:
-                self._show_error(
-                    str(verr) or "The server configuration is invalid."
+        result: dict = {}
+
+        def work():
+            try:
+                data, raw, err = server_index.fetch_server_config(
+                    server["config_url"]
                 )
+            except Exception as e:  # defensive: never leave the dialog stuck
+                data, raw, err = None, None, f"Fetch failed: {e}"
+            result.update(data=data, raw=raw, err=err)
+
+        thread = threading.Thread(target=work, daemon=True)
+        thread.start()
+
+        poll = QTimer(self)
+        poll.setInterval(25)
+
+        def check():
+            if thread.is_alive():
                 return
-        finally:
-            QApplication.restoreOverrideCursor()
+            poll.stop()
+            if not self._fetching:  # the dialog was cancelled meanwhile
+                return
+            self._finish_remote(server, result)
+
+        poll.timeout.connect(check)
+        poll.start()
+
+    def _finish_remote(self, server: dict, result: dict):
+        self._fetching = False
+        ok = self.findChild(QPushButton, "launcherConfigOk")
+        self._list.setEnabled(bool(self._servers))
+        self._status.setText(
+            "Select a server, or choose a local configuration file below."
+        )
+        if ok is not None:
+            ok.setEnabled(
+                bool(self._list.selectedItems())
+                or bool(self._path.text().strip())
+            )
+        if result.get("err"):
+            self._show_error(result["err"])
+            return
+        config, verr = launcher.validate_dict(result.get("data"))
+        if config is None:
+            self._show_error(
+                str(verr) or "The server configuration is invalid."
+            )
+            return
         self._selected_path = ""
         self._selection = {
             "kind": "remote",
             "config_url": server["config_url"],
             "name": server.get("name", ""),
-            "raw": raw,
+            "raw": result.get("raw"),
         }
         self.accept()
 

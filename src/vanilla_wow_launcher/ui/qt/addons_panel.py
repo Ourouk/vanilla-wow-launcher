@@ -37,9 +37,9 @@ _INTERFACE_VERSION = "11200"
 
 
 class AddonRow(QWidget):
-    """One addon row: star badge, colored title, description, repo link,
-    status text and a checkbox — checked when installed, unchecked when
-    available. Toggling the checkbox records a pending install/remove."""
+    """One addon row: install checkbox (checked when installed, unchecked
+    when available), star badge, colored title, description, repo link and
+    status text. Toggling the checkbox records a pending install/remove."""
 
     def __init__(
         self,
@@ -76,6 +76,19 @@ class AddonRow(QWidget):
 
         root, top, top_layout = make_row_shell(self)
 
+        # The install checkbox leads the row, before the title.
+        self.checkbox = QCheckBox(top)
+        self.checkbox.setObjectName(f"addonsCheck_{rec.folder}")
+        self.checkbox.setChecked(installed)
+        self.checkbox.setCursor(Qt.PointingHandCursor)
+        self.checkbox.setToolTip(
+            "Install or remove this addon on the next Apply"
+        )
+        self.checkbox.toggled.connect(
+            lambda checked, f=rec.folder: on_toggle(f, checked)
+        )
+        top_layout.addWidget(self.checkbox, 0, Qt.AlignTop)
+
         # Fixed-width slot keeps titles aligned whether or not the star shows.
         self.star_label = add_star(
             top_layout,
@@ -103,7 +116,7 @@ class AddonRow(QWidget):
 
         top_layout.addStretch(1)
 
-        # Right side pinned to the edge: status text, repo link, checkbox.
+        # Right side pinned to the edge: status text and repo link.
         if rec.status == "downloading":
             status = QLabel("downloading…", top)
             status.setStyleSheet(f"color: {p.text_dim.name()};")
@@ -157,15 +170,6 @@ class AddonRow(QWidget):
             )
         else:
             self.link_label = None
-
-        self.checkbox = QCheckBox(top)
-        self.checkbox.setObjectName(f"addonsCheck_{rec.folder}")
-        self.checkbox.setChecked(installed)
-        self.checkbox.setCursor(Qt.PointingHandCursor)
-        self.checkbox.toggled.connect(
-            lambda checked, f=rec.folder: on_toggle(f, checked)
-        )
-        top_layout.addWidget(self.checkbox, 0, Qt.AlignTop)
 
         root.addWidget(top)
 
@@ -257,9 +261,12 @@ class AddonsPanel(ScrollListPanel):
         footer_layout = QHBoxLayout(footer)
         footer_layout.setContentsMargins(16, 6, 16, 10)
 
-        check = ClickableLabel("⟳  Check for updates", footer)
+        check = QToolButton(footer)
         check.setObjectName("addonsCheck")
+        check.setText("⟳  Check for updates")
+        check.setCursor(Qt.PointingHandCursor)
         check.setStyleSheet(f"color: {p.text_dim.name()};")
+        check.setToolTip("Re-check every addon against its repository")
         check.clicked.connect(self._on_check)
         footer_layout.addWidget(check)
 
@@ -268,17 +275,7 @@ class AddonsPanel(ScrollListPanel):
         )
         self._recommended_button.setObjectName("addonsInstallRecommended")
         self._recommended_button.setCursor(Qt.PointingHandCursor)
-        self._recommended_button.setStyleSheet(
-            f"QPushButton {{ color: {p.gold.name()};"
-            f" border: 1px solid {p.gold.name()}; border-radius: 4px;"
-            f" background-color: {p.panel_bdr.name()};"
-            f" padding: 4px 16px; font-weight: bold; }}"
-            f"QPushButton:hover {{ background-color: {p.gold.name()};"
-            f" color: {p.hdr.name()}; }}"
-            f"QPushButton:disabled {{ color: {p.text_dim.name()};"
-            f" border-color: {p.panel_bdr.name()};"
-            f" background-color: {p.panel.name()}; }}"
-        )
+        self._recommended_button.setProperty("variant", "primary")
         self._recommended_button.clicked.connect(self._on_install_recommended)
         footer_layout.addWidget(self._recommended_button)
 
@@ -287,31 +284,24 @@ class AddonsPanel(ScrollListPanel):
         self._apply_button = QPushButton("Apply", footer)
         self._apply_button.setObjectName("addonsApply")
         self._apply_button.setCursor(Qt.PointingHandCursor)
-        self._apply_button.setStyleSheet(
-            f"QPushButton {{ color: {p.ok.name()};"
-            f" border: 1px solid {p.ok.name()}; border-radius: 4px;"
-            f" background-color: {p.panel_bdr.name()};"
-            f" padding: 4px 16px; font-weight: bold; }}"
-            f"QPushButton:hover {{ background-color: {p.ok.name()};"
-            f" color: {p.hdr.name()}; }}"
-            f"QPushButton:disabled {{ color: {p.text_dim.name()};"
-            f" border-color: {p.panel_bdr.name()};"
-            f" background-color: {p.panel.name()}; }}"
-        )
+        self._apply_button.setProperty("variant", "positive")
         self._apply_button.clicked.connect(self._apply)
         self._apply_button.setVisible(False)
         footer_layout.addWidget(self._apply_button)
 
-        custom = ClickableLabel("+  Add custom git addon", footer)
+        custom = QToolButton(footer)
         custom.setObjectName("addonsCustom")
+        custom.setText("+  Add custom git addon")
+        custom.setCursor(Qt.PointingHandCursor)
         custom.setStyleSheet(f"color: {p.pink.name()}; font-weight: bold;")
         custom.clicked.connect(self.customAddonRequested.emit)
         footer_layout.addWidget(custom)
 
         footer_layout.addStretch(1)
 
-        self._footer_label = ClickableLabel("", footer)
+        self._footer_label = QToolButton(footer)
         self._footer_label.setObjectName("addonsFooter")
+        self._footer_label.setCursor(Qt.PointingHandCursor)
         self._footer_label.clicked.connect(self._on_update_all)
         footer_layout.addWidget(self._footer_label)
 
@@ -388,6 +378,8 @@ class AddonsPanel(ScrollListPanel):
         toggle.setObjectName(f"addonsToggle_{title}")
         toggle.setText("▾" if is_open else "▸")
         toggle.setCursor(Qt.PointingHandCursor)
+        toggle.setToolTip("Collapse or expand this section")
+        toggle.setAccessibleName(f"{title} section")
         toggle.clicked.connect(lambda: self._toggle_section(title))
         layout.addWidget(toggle)
 

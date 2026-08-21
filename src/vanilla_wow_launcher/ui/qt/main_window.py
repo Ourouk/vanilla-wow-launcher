@@ -12,6 +12,7 @@ exposed as attributes for the settings and update workflows.
 import queue
 import threading
 import webbrowser
+from collections import deque
 
 from PySide6.QtCore import QObject, Qt, QTimer, Signal
 from PySide6.QtGui import QPixmap
@@ -35,6 +36,7 @@ from ...core.constants import UPDATER_VERSION
 from ...core.log_sink import _LOG_Q, log
 from ...services import logo
 from ...state.events import LogMessage
+from . import metrics
 from .addons_panel import AddonsPanel
 from .bridge import ControllerHub
 from .custom_addon_dialog import CustomAddonDialog
@@ -84,7 +86,7 @@ class MainWindow(QMainWindow):
         self._hub = hub
         self._palette = palette_for_config(launcher.config())
         self._settingsDialog = None
-        self._log_buffer: list = []
+        self._log_buffer: deque = deque(maxlen=2000)
         self._logWindow = None
         self._customAddonDialog = None
         self._discordButton = None
@@ -151,7 +153,7 @@ class MainWindow(QMainWindow):
             launcher.server_name() or "Vanilla WoW Launcher", header
         )
         font = self._wordmark.font()
-        font.setPointSize(17)
+        font.setPointSize(metrics.PT_TITLE)
         font.setBold(True)
         self._wordmark.setFont(font)
         self._wordmark.setStyleSheet(f"color: {p.purple.name()};")
@@ -164,7 +166,8 @@ class MainWindow(QMainWindow):
         wmLayout.addWidget(self._wordmark)
         self._updateAvailableLabel = QLabel("Update available!", wordmarkBox)
         self._updateAvailableLabel.setStyleSheet(
-            f"color: {p.gold.name()}; font-weight: bold; font-size: 8pt;"
+            f"color: {p.gold.name()}; font-weight: bold;"
+            f" font-size: {metrics.PT_BADGE}pt;"
         )
         self._updateAvailableLabel.hide()
         wmLayout.addWidget(self._updateAvailableLabel)
@@ -208,7 +211,8 @@ class MainWindow(QMainWindow):
             badge.setAttribute(Qt.WA_TransparentForMouseEvents)
             badge.setStyleSheet(
                 f"background-color: {p.gold.name()}; color: {p.hdr.name()};"
-                f" border-radius: 8px; font-size: 8pt; font-weight: bold;"
+                f" border-radius: 8px; font-size: {metrics.PT_BADGE}pt;"
+                f" font-weight: bold;"
                 f" padding: 0 4px;"
             )
             badge.hide()
@@ -248,9 +252,11 @@ class MainWindow(QMainWindow):
         self._gearButton = QToolButton(header)
         self._gearButton.setText("⚙")
         self._gearButton.setToolTip("Settings")
+        self._gearButton.setAccessibleName("Settings")
         self._gearButton.setCursor(Qt.PointingHandCursor)
         self._gearButton.setStyleSheet(
-            f"QToolButton {{ color: {p.text_dim.name()}; font-size: 14pt; }}"
+            f"QToolButton {{ color: {p.text_dim.name()};"
+            f" font-size: {metrics.PT_ICON}pt; }}"
             f"QToolButton:hover {{ color: {p.gold.name()}; }}"
         )
         self._gearButton.clicked.connect(self._open_settings_dialog)
@@ -350,7 +356,7 @@ class MainWindow(QMainWindow):
         self._buttonStyles = {
             "update": (
                 f"QPushButton {{ background-color: {p.gold.name()};"
-                " color: #ffffff; border: 1px solid"
+                f" color: {p.btn_text.name()}; border: 1px solid"
                 f" {p.gold_lt.name()}; border-radius: 6px;"
                 " padding: 8px 26px; font-weight: bold; }"
                 f"QPushButton:hover {{ background-color:"
@@ -358,7 +364,7 @@ class MainWindow(QMainWindow):
             ),
             "play": (
                 f"QPushButton {{ background-color: {p.green_btn.name()};"
-                " color: #ffffff; border: 1px solid"
+                f" color: {p.btn_text.name()}; border: 1px solid"
                 f" {p.green_hov.name()}; border-radius: 6px;"
                 " padding: 8px 26px; font-weight: bold; }"
                 f"QPushButton:hover {{ background-color:"
@@ -366,7 +372,7 @@ class MainWindow(QMainWindow):
             ),
             "terminate": (
                 f"QPushButton {{ background-color: {p.err.name()};"
-                " color: #ffffff; border: 1px solid"
+                f" color: {p.btn_text.name()}; border: 1px solid"
                 f" {p.err.name()}; border-radius: 6px;"
                 " padding: 8px 26px; font-weight: bold; }"
                 f"QPushButton:hover {{ background-color:"
@@ -397,6 +403,9 @@ class MainWindow(QMainWindow):
         rightLayout = QVBoxLayout(right)
         rightLayout.setContentsMargins(0, 0, 0, 0)
         rightLayout.setSpacing(4)
+        # Align the progress column with the morphing button's width so the
+        # footer reads as two stable columns.
+        right.setMinimumWidth(150)
 
         self._progressBar = QProgressBar(right)
         self._progressBar.setTextVisible(False)

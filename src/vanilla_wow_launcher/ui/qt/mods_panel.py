@@ -1,7 +1,7 @@
 """Vanilla WoW Launcher Qt (PySide6) mods panel.
 
 Renders the mod registry into a scrollable list of `ModRow` widgets —
-essential star badge, install state, enable/ignore checkboxes, repo link,
+install checkbox, essential star badge, name/version, repo link,
 retry/update action and error line — plus an Apply footer and a nav-badge
 callback driven by the updates count. Rows are rebuilt from every ModsLoaded
 snapshot the bridge forwards; user actions are forwarded straight into the
@@ -30,9 +30,9 @@ from .theme import Palette
 
 
 class ModRow(QWidget):
-    """One mod row: star badge, name/version, enable + ignore checkboxes,
-    repo link, retry/update action, word-wrapped description and an error
-    line under the row."""
+    """One mod row: install checkbox, star badge, name/version, repo link,
+    retry/update action, word-wrapped description and an error line under
+    the row."""
 
     def __init__(
         self, mod, rec, pend, latest_versions, action, palette, parent=None
@@ -51,11 +51,6 @@ class ModRow(QWidget):
             if pend is not None and pend.enabled is not None
             else (rec.enabled if rec else False)
         )
-        ignore = (
-            pend.ignore_updates
-            if pend is not None and pend.ignore_updates is not None
-            else (rec.ignore_updates if rec else False)
-        )
         essential = mod.get("essential", False)
 
         name_col = p.err if has_error else (p.mod_hl if installed else p.text)
@@ -63,6 +58,16 @@ class ModRow(QWidget):
         version = installed_version or latest_versions.get(mid) or "unknown"
 
         root, top, top_layout = make_row_shell(self)
+
+        # The install/enable checkbox leads the row, before the name.
+        self.enabled_check = QCheckBox(top)
+        self.enabled_check.setObjectName(f"modsCheck_{mid}")
+        self.enabled_check.setCursor(Qt.PointingHandCursor)
+        self.enabled_check.setChecked(enabled)
+        self.enabled_check.setToolTip(
+            "Enable or disable this mod for the next launch"
+        )
+        top_layout.addWidget(self.enabled_check, 0, Qt.AlignTop)
 
         # Fixed-width slot keeps names aligned whether or not the star shows.
         self.star_label = add_star(
@@ -81,25 +86,20 @@ class ModRow(QWidget):
         self.version_label.setStyleSheet(f"color: {p.text_dim.name()};")
         top_layout.addWidget(self.version_label, 0, Qt.AlignTop)
 
-        self.enabled_check = QCheckBox(top)
-        self.enabled_check.setObjectName(f"modsCheck_{mid}")
-        self.enabled_check.setCursor(Qt.PointingHandCursor)
-        self.enabled_check.setChecked(enabled)
-        top_layout.addWidget(self.enabled_check, 0, Qt.AlignTop)
-
         top_layout.addStretch(1)
 
         self.action_button = None
         if action in ("retry", "update"):
-            self.action_button = QPushButton(action, top)
+            # Display labels are Title Case per panel-action convention;
+            # the action *kind* itself ("retry"/"update") is machine-facing.
+            self.action_button = QPushButton(action.capitalize(), top)
             self.action_button.setObjectName(f"modsAction_{mid}")
             self.action_button.setCursor(Qt.PointingHandCursor)
-            self.action_button.setStyleSheet(
-                f"QPushButton {{ color: {p.gold.name()};"
-                f" border: 1px solid {p.gold.name()}; border-radius: 4px;"
-                f" background-color: transparent; padding: 1px 10px; }}"
-                f"QPushButton:hover {{ background-color: {p.gold.name()};"
-                f" color: {p.hdr.name()}; }}"
+            self.action_button.setProperty("variant", "compact")
+            self.action_button.setToolTip(
+                "Retry the last failed action"
+                if action == "retry"
+                else "Update this mod to the latest version"
             )
             top_layout.addWidget(self.action_button)
 
@@ -109,16 +109,6 @@ class ModRow(QWidget):
             )
         else:
             self.link_label = None
-
-        self.ignore_check = QCheckBox(top)
-        self.ignore_check.setObjectName(f"modsIgnore_{mid}")
-        self.ignore_check.setCursor(Qt.PointingHandCursor)
-        self.ignore_check.setChecked(ignore)
-        top_layout.addWidget(self.ignore_check, 0, Qt.AlignTop)
-
-        ignore_label = QLabel("Ignore updates", top)
-        ignore_label.setStyleSheet(f"color: {p.text_dim.name()};")
-        top_layout.addWidget(ignore_label, 0, Qt.AlignTop)
 
         root.addWidget(top)
 
@@ -181,7 +171,6 @@ class ModsPanel(ScrollListPanel):
         self._add_hsep()
 
     def _build_footer(self):
-        p = self._palette
         self._add_hsep()
         footer = QWidget(self)
         footer_layout = QHBoxLayout(footer)
@@ -189,31 +178,14 @@ class ModsPanel(ScrollListPanel):
         self._recommended_button = QPushButton("★  Install Essential", footer)
         self._recommended_button.setObjectName("modsInstallRecommended")
         self._recommended_button.setCursor(Qt.PointingHandCursor)
-        self._recommended_button.setStyleSheet(
-            f"QPushButton {{ color: {p.gold.name()};"
-            f" border: 1px solid {p.gold.name()}; border-radius: 4px;"
-            f" background-color: {p.panel_bdr.name()};"
-            f" padding: 5px 18px; font-weight: bold; }}"
-            f"QPushButton:hover {{ background-color: {p.gold.name()};"
-            f" color: {p.hdr.name()}; }}"
-            f"QPushButton:disabled {{ color: {p.text_dim.name()};"
-            f" border-color: {p.panel_bdr.name()};"
-            f" background-color: {p.panel.name()}; }}"
-        )
+        self._recommended_button.setProperty("variant", "primary")
         self._recommended_button.clicked.connect(self._on_install_recommended)
         footer_layout.addWidget(self._recommended_button)
 
         self._apply_button = QPushButton("Apply", footer)
         self._apply_button.setObjectName("modsApply")
         self._apply_button.setCursor(Qt.PointingHandCursor)
-        self._apply_button.setStyleSheet(
-            f"QPushButton {{ color: {p.text.name()};"
-            f" border: 1px solid {p.gold.name()}; border-radius: 4px;"
-            f" background-color: {p.panel_bdr.name()};"
-            f" padding: 5px 26px; font-weight: bold; }}"
-            f"QPushButton:hover {{ background-color: {p.gold.name()};"
-            f" color: {p.hdr.name()}; }}"
-        )
+        self._apply_button.setProperty("variant", "primary")
         self._apply_button.clicked.connect(self._apply)
         self._apply_button.setVisible(False)
         footer_layout.addWidget(self._apply_button)
@@ -226,6 +198,18 @@ class ModsPanel(ScrollListPanel):
         if state is None:
             return
         self._clear_rows()
+        if not self._mods.registry:
+            p = self._palette
+            empty = QLabel(
+                "No mods catalog available.\n"
+                "Configure a catalog URL under Settings → Catalog "
+                "registries, then use Reload.",
+                self._content,
+            )
+            empty.setObjectName("modsEmptyState")
+            empty.setWordWrap(True)
+            empty.setStyleSheet(f"color: {p.text_dim.name()};")
+            self._add_row(empty)
         for mod in sorted(
             self._mods.registry, key=lambda m: m["name"].lower()
         ):
@@ -241,9 +225,6 @@ class ModsPanel(ScrollListPanel):
             )
             row.enabled_check.toggled.connect(
                 lambda checked, m=mid: self._on_enabled_toggled(m, checked)
-            )
-            row.ignore_check.toggled.connect(
-                lambda checked, m=mid: self._on_ignore_toggled(m, checked)
             )
             if row.action_button is not None:
                 row.action_button.clicked.connect(
@@ -279,15 +260,8 @@ class ModsPanel(ScrollListPanel):
             remove = QPushButton("Remove", shell)
             remove.setObjectName(f"modsUnknownRemove_{name}")
             remove.setCursor(Qt.PointingHandCursor)
-            remove.setStyleSheet(
-                f"QPushButton {{ color: {p.text.name()};"
-                f" border: 1px solid {p.panel_bdr.name()};"
-                f" border-radius: 4px;"
-                f" background-color: {p.panel_bdr.name()};"
-                f" padding: 1px 12px; }}"
-                f"QPushButton:hover {{ background-color: {p.gold.name()};"
-                f" color: {p.hdr.name()}; }}"
-            )
+            remove.setToolTip("Delete this file and its dlls.txt entry")
+            remove.setProperty("variant", "outline")
             remove.clicked.connect(
                 lambda checked=False, n=name: self._on_remove_unknown(n)
             )
@@ -335,10 +309,6 @@ class ModsPanel(ScrollListPanel):
         self._mods.toggle(mid, checked)
         self._refresh_apply_visibility()
 
-    def _on_ignore_toggled(self, mid, checked):
-        self._mods.set_ignore(mid, checked)
-        self._refresh_apply_visibility()
-
     def _on_action(self, mid):
         self._set_running(True)
         self._mods.apply(only_mod_id=mid)
@@ -356,6 +326,13 @@ class ModsPanel(ScrollListPanel):
     def _set_running(self, running: bool):
         self._running = running
         self._apply_button.setEnabled(not running)
+        if running:
+            self._apply_button.setText("Applying…")
+        else:
+            self._apply_button.setText("Apply")
+        for row in self._rows.values():
+            if row.action_button is not None:
+                row.action_button.setEnabled(not running)
         self._refresh_recommended_visibility()
 
     # ── event hooks ────────────────────────────────────────────────────────

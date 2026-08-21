@@ -237,9 +237,9 @@ def test_action_labels_follow_action_for(qapp, window, hub):
 
     panel = _panel(window)
     retry = panel.findChild(QPushButton, "modsAction_AlphaMod")
-    assert retry is not None and retry.text() == "retry"
+    assert retry is not None and retry.text() == "Retry"
     update = panel.findChild(QPushButton, "modsAction_BetaMod")
-    assert update is not None and update.text() == "update"
+    assert update is not None and update.text() == "Update"
     # Up-to-date mods get no action button.
     assert panel.findChild(QPushButton, "modsAction_GammaMod") is None
 
@@ -255,15 +255,6 @@ def test_enable_checkbox_forwards_toggle(qapp, window, hub):
     QTest.qWait(0)
     pend = hub.mods.state.pending.get("AlphaMod")
     assert pend is not None and pend.enabled is True
-
-
-def test_ignore_checkbox_forwards_set_ignore(qapp, window, hub):
-    panel = _panel(window)
-    ignore = panel.findChild(QCheckBox, "modsIgnore_AlphaMod")
-    ignore.setChecked(True)
-    QTest.qWait(0)
-    pend = hub.mods.state.pending.get("AlphaMod")
-    assert pend is not None and pend.ignore_updates is True
 
 
 # ── apply button ────────────────────────────────────────────────────────
@@ -330,7 +321,7 @@ def test_action_button_calls_apply_for_that_mod(
     apply_mock = Mock()
     monkeypatch.setattr(hub.mods, "apply", apply_mock)
     retry = panel.findChild(QPushButton, "modsAction_AlphaMod")
-    assert retry is not None and retry.text() == "retry"
+    assert retry is not None and retry.text() == "Retry"
     retry.click()
     assert apply_mock.call_count == 1
     assert apply_mock.call_args.kwargs == {"only_mod_id": "AlphaMod"}
@@ -408,9 +399,7 @@ def test_install_essential_button_calls_controller(
 def test_mod_without_repo_url_hides_source_link(qapp, window, hub):
     """A mod with no repo_url must not render the ⧉ source link."""
     state = ModsState(
-        records={
-            "NoRepoMod": ModState(present=False)
-        },
+        records={"NoRepoMod": ModState(present=False)},
         latest_versions={"NoRepoMod": "1.0"},
     )
     hub.mods.state = state

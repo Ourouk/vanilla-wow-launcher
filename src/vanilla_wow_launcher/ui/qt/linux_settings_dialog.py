@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
 )
 
 from ...services.umu import RENDERER_CHOICES
+from . import metrics
 from .theme import Palette, theme_qss
 
 # Renderer presets surfaced in the combobox, keyed for the apply handler.
@@ -63,7 +64,8 @@ class LinuxSettingsDialog(QDialog):
 
         title = QLabel("LINUX (UMU) SETTINGS", hdr)
         title.setStyleSheet(
-            f"color: {p.purple.name()}; font-weight: bold; font-size: 12pt;"
+            f"color: {p.purple.name()}; font-weight: bold;"
+            f" font-size: {metrics.PT_SECTION}pt;"
         )
         layout.addWidget(title)
         layout.addStretch(1)
@@ -94,7 +96,7 @@ class LinuxSettingsDialog(QDialog):
             "to enable PLAY on Linux.",
             self,
         )
-        hint.setObjectName("settingsUmuHint")
+        hint.setObjectName("linuxSettingsUmuHint")
         hint.setWordWrap(True)
         hint.setStyleSheet(f"color: {p.text_dim.name()}; font-size: 9pt;")
         body.addWidget(hint)
@@ -108,7 +110,7 @@ class LinuxSettingsDialog(QDialog):
         self._add_launch_combo(
             layout=body,
             label="Proton",
-            object_name="settingsProton",
+            object_name="linuxSettingsProton",
             options=proton_options,
             current=launch.umu_proton or "UMU-Proton",
             on_apply=self._settings.set_umu_proton,
@@ -116,7 +118,7 @@ class LinuxSettingsDialog(QDialog):
         self._add_launch_combo(
             layout=body,
             label="Renderer",
-            object_name="settingsRenderer",
+            object_name="linuxSettingsRenderer",
             options=[label for _, label in RENDERER_CHOICES],
             current=_RENDERER_LABELS.get(
                 launch.umu_renderer, "Auto (Proton default)"
@@ -128,7 +130,7 @@ class LinuxSettingsDialog(QDialog):
         self._add_feature_check(
             layout=body,
             text="GameMode",
-            object_name="settingsGamemode",
+            object_name="linuxSettingsGamemode",
             checked=launch.umu_gamemode,
             available=features["gamemode_available"],
             on_toggled=self._settings.set_umu_gamemode,
@@ -139,7 +141,7 @@ class LinuxSettingsDialog(QDialog):
         self._add_feature_check(
             layout=body,
             text="Wayland backend",
-            object_name="settingsWayland",
+            object_name="linuxSettingsWayland",
             checked=launch.umu_wayland,
             available=features["wayland_session"],
             on_toggled=self._settings.set_umu_wayland,
@@ -149,7 +151,7 @@ class LinuxSettingsDialog(QDialog):
         self._add_launch_field(
             layout=body,
             label="GAMEID",
-            object_name="settingsUmuGameId",
+            object_name="linuxSettingsUmuGameId",
             value=launch.umu_game_id,
             on_apply=self._settings.set_umu_game_id,
             get_value=lambda: self._settings.launch.umu_game_id,
@@ -163,16 +165,16 @@ class LinuxSettingsDialog(QDialog):
         bin_name.setFixedWidth(64)
         bin_row.addWidget(bin_name)
         self._umu_bin_edit = QLineEdit(launch.umu_binary_path, self)
-        self._umu_bin_edit.setObjectName("settingsUmuPath")
+        self._umu_bin_edit.setObjectName("linuxSettingsUmuPath")
         self._umu_bin_edit.setPlaceholderText("auto-detect on PATH")
         bin_row.addWidget(self._umu_bin_edit, 1)
         browse = QPushButton("Browse…", self)
-        browse.setObjectName("settingsUmuBrowse")
+        browse.setObjectName("linuxSettingsUmuBrowse")
         browse.setCursor(Qt.PointingHandCursor)
         browse.clicked.connect(self._on_umu_browse)
         bin_row.addWidget(browse)
         apply = QPushButton("Apply", self)
-        apply.setObjectName("settingsUmuPathApply")
+        apply.setObjectName("linuxSettingsUmuPathApply")
         apply.setCursor(Qt.PointingHandCursor)
         apply.clicked.connect(self._on_umu_path_apply)
         bin_row.addWidget(apply)

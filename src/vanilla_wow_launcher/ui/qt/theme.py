@@ -44,6 +44,10 @@ _ATTRS = [
     ("parch_dim", "C_PARCH_DIM"),
     ("parch_link", "C_PARCH_LINK"),
     ("parch_edge", "C_PARCH_EDGE"),
+    ("pink", "C_PINK"),
+    ("pink_lt", "C_PINK_LT"),
+    ("warn", "C_WARN"),
+    ("btn_text", "C_BTN_TEXT"),
 ]
 
 
@@ -61,11 +65,6 @@ class Palette:
         self.colors = {name: QColor(value) for name, value in colors.items()}
         for attr, key in _ATTRS:
             setattr(self, attr, self.colors[key])
-        # Extra accent colors beyond the core palette (pink/warn), added as
-        # convenience attributes for the addons panel.
-        self.pink = QColor("#d76f9e")
-        self.pink_lt = QColor("#eb96ba")
-        self.warn = QColor("#d4b43c")
 
 
 def palette_for_config(cfg) -> Palette:
@@ -224,5 +223,67 @@ QToolButton {{
 }}
 QToolButton:hover {{
     color: {p.gold_lt.name()};
+}}
+QPushButton[variant="primary"] {{
+    color: {p.gold.name()};
+    border: 1px solid {p.gold.name()};
+    border-radius: 4px;
+    background-color: {p.panel_bdr.name()};
+    padding: 5px 18px;
+    font-weight: bold;
+}}
+QPushButton[variant="primary"]:hover {{
+    background-color: {p.gold.name()};
+    color: {p.hdr.name()};
+}}
+QPushButton[variant="positive"] {{
+    color: {p.ok.name()};
+    border: 1px solid {p.ok.name()};
+    border-radius: 4px;
+    background-color: {p.panel_bdr.name()};
+    padding: 5px 18px;
+    font-weight: bold;
+}}
+QPushButton[variant="positive"]:hover {{
+    background-color: {p.ok.name()};
+    color: {p.hdr.name()};
+}}
+QPushButton[variant="outline"] {{
+    color: {p.text.name()};
+    border: 1px solid {p.panel_bdr.name()};
+    border-radius: 4px;
+    background-color: transparent;
+    padding: 3px 10px;
+}}
+QPushButton[variant="outline"]:hover {{
+    border-color: {p.gold.name()};
+    color: {p.gold_lt.name()};
+}}
+QPushButton[variant="compact"] {{
+    color: {p.gold.name()};
+    border: 1px solid {p.gold.name()};
+    border-radius: 4px;
+    background-color: transparent;
+    padding: 1px 10px;
+}}
+QPushButton[variant="compact"]:hover {{
+    background-color: {p.gold.name()};
+    color: {p.hdr.name()};
+}}
+QPushButton[variant="primary"]:disabled,
+QPushButton[variant="positive"]:disabled {{
+    color: {p.text_dim.name()};
+    border-color: {p.panel_bdr.name()};
+    background-color: {p.panel.name()};
+}}
+QLabel[role="sectionTitle"] {{
+    color: {p.gold_lt.name()};
+    font-size: 12pt;
+    font-weight: bold;
+}}
+QFrame[role="hairline"] {{
+    background-color: {p.divider.name()};
+    border: none;
+    max-height: 1px;
 }}
 """
