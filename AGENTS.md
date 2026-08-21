@@ -93,6 +93,17 @@ src/vanilla_wow_launcher/
   the online catalog(s) AND rescans SHAs. Panel headers show a "Catalog
   updated …" age tag. There is no bundled registry/recommended list — tests
   provide one by monkeypatching `mods.mods_registry()`.
+- The ADDONS list is sectioned, not flat: stale installs get a **NEED
+  UPDATE** section rendered above **INSTALLED** (only when non-empty),
+  followed by **AVAILABLE**; each header shows its count and collapses
+  independently (persisted in `AddonsState.sections_open`, new titles
+  default open). There is deliberately no per-row "Up to date" label — the
+  categories carry that meaning; stale rows keep their gold clickable
+  "Update" action. The row website-link glyph (⧉, shared with MODS via
+  `list_panel.add_row_link`) is sized by the `PT_LINK_ICON` metrics token.
+  `services/addons.addon_remote_sha()` refuses any git URL whose host is
+  outside `ADDON_GIT_HOSTS` before opening an API connection or spawning
+  `git ls-remote`.
 - Client updates get a second download backend: when the active download
   source advertises a `torrent_url` (launcher config, server or mirror) and
   libtorrent is importable, `UpdateWorker` bulk-downloads the stale files via
