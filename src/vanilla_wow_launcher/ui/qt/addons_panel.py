@@ -1,6 +1,6 @@
 """Vanilla WoW Launcher Qt (PySide6) addons panel.
 
-Renders the controller's AddonsState into a searchable, collapsible two-section
+Renders the controller's AddonsState into a searchable, collapsible sectioned
 list of `AddonRow` widgets — recommendation star, colored title, word-wrapped
 description, repo link, status text and a checkbox — plus
 a check-for-updates / custom-addon footer and a nav-badge callback driven by
@@ -160,13 +160,15 @@ class AddonRow(QWidget):
             status = QLabel(f"⚠ {warnings[0]}", top)
             status.setStyleSheet(f"color: {p.warn.name()};")
         elif rec.status == "upToDate":
-            status = QLabel("Up to date", top)
-            status.setStyleSheet(f"color: {p.text_dim.name()};")
+            # The NEED UPDATE / INSTALLED categories say it all — a per-row
+            # "Up to date" would just be noise.
+            status = None
         else:
             status = QLabel("Not versioned", top)
             status.setStyleSheet(f"color: {p.text_dim.name()};")
-        status.setObjectName(f"addonsStatus_{rec.folder}")
-        top_layout.addWidget(status, 0, Qt.AlignTop)
+        if status is not None:
+            status.setObjectName(f"addonsStatus_{rec.folder}")
+            top_layout.addWidget(status, 0, Qt.AlignTop)
 
         if rec.git:
             repo_url = rec.git[:-4] if rec.git.endswith(".git") else rec.git
@@ -364,10 +366,15 @@ class AddonsPanel(ScrollListPanel):
         )
 
         installed_names = set(state.addons)
-        for title, rows in (
-            ("INSTALLED", installed),
-            ("AVAILABLE", available),
-        ):
+        # Stale installs get their own category on top; everything else
+        # installed stays under INSTALLED.
+        need_update = [r for r in installed if r.status == "outOfDate"]
+        up_to_date = [r for r in installed if r.status != "outOfDate"]
+        sections = [("INSTALLED", up_to_date)]
+        if need_update:
+            sections.insert(0, ("NEED UPDATE", need_update))
+        sections.append(("AVAILABLE", available))
+        for title, rows in sections:
             self._add_section_header(title, rows, state)
             if state.sections_open.get(title, True):
                 for rec in rows:

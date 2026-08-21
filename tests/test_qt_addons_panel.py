@@ -233,14 +233,19 @@ def test_warning_status_for_interface_mismatch(qapp, window, hub):
 def test_section_toggle_collapses_and_expands_rows(qapp, window, hub):
     _post(hub, _make_state(addons=MIX_ADDONS, available=MIX_AVAILABLE))
     panel = _panel(window)
+    # Stale installs get their own NEED UPDATE category on top.
+    assert panel.findChild(QWidget, "addonsSection_NEED UPDATE") is not None
     toggle = panel.findChild(QWidget, "addonsToggle_INSTALLED")
     assert toggle.text() == "▾"
-    assert panel.findChild(QWidget, "addonsRow_SellValue") is not None
+    # Up-to-date rows live under INSTALLED (Magnify isn't stale).
+    assert panel.findChild(QWidget, "addonsRow_Magnify") is not None
 
     toggle.click()
     QTest.qWait(20)
     assert hub.addons.state.sections_open["INSTALLED"] is False
-    assert panel.findChild(QWidget, "addonsRow_SellValue") is None
+    assert panel.findChild(QWidget, "addonsRow_Magnify") is None
+    # The stale row stays visible under NEED UPDATE.
+    assert panel.findChild(QWidget, "addonsRow_SellValue") is not None
     # Available rows are untouched.
     assert panel.findChild(QWidget, "addonsRow_pfUI") is not None
 
@@ -249,7 +254,22 @@ def test_section_toggle_collapses_and_expands_rows(qapp, window, hub):
     toggle.click()
     QTest.qWait(20)
     assert hub.addons.state.sections_open["INSTALLED"] is True
-    assert panel.findChild(QWidget, "addonsRow_SellValue") is not None
+    assert panel.findChild(QWidget, "addonsRow_Magnify") is not None
+
+    # NEED UPDATE collapses independently.
+    stale_toggle = panel.findChild(QWidget, "addonsToggle_NEED UPDATE")
+    stale_toggle.click()
+    QTest.qWait(20)
+    assert hub.addons.state.sections_open["NEED UPDATE"] is False
+    assert panel.findChild(QWidget, "addonsRow_SellValue") is None
+
+
+def test_no_need_update_section_when_everything_is_current(qapp, window, hub):
+    addons = {folder: dict(status="upToDate") for folder in ("Alpha", "Beta")}
+    _post(hub, _make_state(addons=addons))
+    panel = _panel(window)
+    assert panel.findChild(QWidget, "addonsSection_NEED UPDATE") is None
+    assert panel.findChild(QWidget, "addonsSection_INSTALLED") is not None
 
 
 # ── search filter ───────────────────────────────────────────────────────
