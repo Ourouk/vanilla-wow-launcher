@@ -473,6 +473,39 @@ def test_addon_remote_sha_resolves_and_caches(tmp_path, monkeypatch):
     assert addons.addon_cached_sha("https://github.com/a/b") == sha
 
 
+def test_addon_remote_sha_gates_disallowed_host(tmp_path, monkeypatch):
+    """A git URL outside the allowlist short-circuits to None before any
+    API call or `git ls-remote` subprocess (review §12.3)."""
+
+    def boom(*a, **k):
+        raise AssertionError("disallowed host must not be contacted")
+
+    monkeypatch.setattr(addons, "secure_urlopen", boom)
+    monkeypatch.setattr(addons.subprocess, "run", boom)
+
+    config_store.configure(
+        str(tmp_path / "config.json"), str(tmp_path / "cache.json")
+    )
+    assert addons.addon_remote_sha("https://evil.example/org/repo.git") is None
+
+
+def test_addon_remote_sha_allows_allowlisted_host(tmp_path, monkeypatch):
+    """An allowlisted host proceeds normally: the mocked API sha is
+    resolved and cached."""
+    config_store.configure(
+        str(tmp_path / "config.json"), str(tmp_path / "cache.json")
+    )
+    config_store.save_config({})
+    sha = "abcd" * 10
+
+    def fake_api_json(url, timeout=10):
+        return {"sha": sha} if "/commits/" in url else [{"sha": sha}]
+
+    monkeypatch.setattr(addons, "_api_json", fake_api_json)
+    assert addons.addon_remote_sha("https://github.com/a/b.git") == sha
+    assert addons.addon_cached_sha("https://github.com/a/b.git") == sha
+
+
 # ── git ls-remote fallback ────────────────────────────────────────────────
 
 

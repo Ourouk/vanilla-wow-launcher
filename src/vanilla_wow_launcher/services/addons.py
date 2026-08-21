@@ -329,6 +329,10 @@ def addon_remote_sha(
     the cached sha / None path still applies, so the packaged launcher never
     hard-depends on a Git executable.
     """
+    # Allowlist gate: never open an API connection nor spawn `git` for a
+    # host outside ADDON_GIT_HOSTS, whatever a catalog entry carries.
+    if not is_allowed_git_url(git_url):
+        return None
     key = f"{git_url}#{ref or branch or ''}"
     now = time.time()
     if not force:
