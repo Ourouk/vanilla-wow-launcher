@@ -26,6 +26,7 @@ PT_SECTION = 12  # panel section headers ("ANNOUNCEMENTS", gold headers)
 PT_BODY = 10  # default row/list text
 PT_HINT = 9  # dim explanatory hints
 PT_ICON = 14  # icon-only toolbuttons (⚙)
+PT_LINK_ICON = 15  # row website-link glyphs (⧉)
 PT_BADGE = 8  # tab count badges
 
 # Spacing scale — vertical rhythm and paddings across panels/dialogs.

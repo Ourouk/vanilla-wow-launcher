@@ -19,6 +19,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .metrics import PT_LINK_ICON
+
 
 def clear_layout(layout):
     """Drop every widget a layout owns so a re-render can rebuild the list."""
@@ -96,6 +98,10 @@ def add_row_link(top_layout, object_name, url, p):
     label = LinkLabel("⧉", url, top_layout.parentWidget())
     label.setObjectName(object_name)
     label.setStyleSheet(f"color: {p.text_dim.name()};")
+    font = label.font()
+    font.setPointSize(PT_LINK_ICON)
+    label.setFont(font)
+    label.setFixedWidth(24)
     label.setToolTip(url)
     top_layout.addWidget(label, 0, Qt.AlignTop)
     return label
