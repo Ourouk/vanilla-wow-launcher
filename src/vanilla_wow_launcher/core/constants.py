@@ -30,7 +30,7 @@ from .platform_support import (
     is_windows,
 )
 
-UPDATER_VERSION = "1.4.0"
+UPDATER_VERSION = "1.4.1"
 UA = f"VanillaWoWLauncher/{UPDATER_VERSION}"
 DOWNLOAD_RETRY = 5
 DOWNLOAD_TIMEOUT = 10  # seconds without any data before a transfer aborts
