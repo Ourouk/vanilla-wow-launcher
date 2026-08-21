@@ -313,26 +313,21 @@ client, mod, addon, patch, and service you use.
 
 ## Attribution and License
 
-This project is derived from the original Octo Updater project:
+Licensed under the Apache License, Version 2.0 — see [LICENSE](LICENSE).
 
-- **rebasedkon** — original author
-- Original project: <https://github.com/rebasedkon/octo-updater>
+This project was heavily inspired by Octo Updater:
 
-The derivative work is maintained by:
+- **rebasedkon** — Octo Updater author
+- Octo Updater: <https://github.com/rebasedkon/octo-updater>
+- Support him: <https://buymeacoffee.com/rebased>
+
+Vanilla WoW Launcher is maintained by:
 
 - **Andrea Spelgatti** — <spelgattiandrea@ourouk.be>
 
 If you enjoy the launcher, you can support its development:
 
 - Buy Me a Coffee: <https://buymeacoffee.com/ourouk>
-
-The original author's attribution and donation links are retained as required
-by the project license:
-
-- Ko-fi: <https://ko-fi.com/rebased>
-- Buy Me a Coffee: <https://buymeacoffee.com/rebased>
-- Email: <inskon@proton.me>
-- Discord: <https://discord.com/users/287467238573867018> (`rebazed`)
 
 See the complete [LICENSE](LICENSE) for copyright, redistribution conditions,
 trademark terms, warranty disclaimer, and contact information.
