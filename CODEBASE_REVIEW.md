@@ -55,11 +55,15 @@ allowlist transfer layer; offline-first caching; comprehensive test coverage
 
 **Weaknesses / risks.** A string-"marker" protocol (`__DONE__`, `__ERROR__`,
 `__MANIFEST_AVAILABLE__`, …) shuttles control state through worker log queues
-— powerful but brittle and under-tested. Several large modules mix concerns
+— powerful but brittle and under-tested **(hardened 2026-08-22: constants
+live in `services/update_backend/markers.py`, `_handle_log` is a dispatch
+table, `tests/test_markers.py` enforces completeness)**. Several large modules mix concerns
 (`http_update.py` ~1070 lines; `controllers/addons.py` `verify()` worker ~250
-lines with duplication). A handful of **real bugs and dead code** exist
-(see §12, §15). The client-update path trusts TLS-fetched torrent piece-hashes
-with weaker re-verification than the docstrings claim. `certifi` was referenced
+lines with duplication) **(partially addressed 2026-08-22: source probing
+extracted to `update_backend/sources.py`; addons verify de-duplicated)**. A handful of **real bugs and dead code** exist
+(see §12, §15) **(remaining items fixed 2026-08-22, see below)**. The client-update path trusts TLS-fetched torrent piece-hashes
+with weaker re-verification than the docstrings claim **(fixed 2026-08-22:
+delivered files are re-verified against the manifest's SHA-1)**. `certifi` was referenced
 but never declared as a dependency — **now fixed (2026-08-21)**: it is a declared
 dependency and its roots load.
 
@@ -793,9 +797,11 @@ with `WoW.exe`-presence gate before marking ready.
 - **Impact:** SSRF-ish reachability to arbitrary HTTPS hosts (no creds, no
   data exfiltration of secrets); limited, but broader than the intended
   git-host allowlist.
-- **Remediation:** Enforce `is_allowed_git_url` (or the host allowlist) at all
-  catalog-parse/verify sites, including remote catalog entries; apply
-  `allowed_hosts` to the `_api_json`/`git ls-remote` calls.
+- **Remediation:** **FIXED 2026-08-22** — `addons.addon_remote_sha` gates at
+  entry: any URL failing `is_allowed_git_url` returns None before an API
+  connection is opened or `git ls-remote` spawned, so every caller (verify
+  worker included) is covered; disallowed rows surface as "unknown" without
+  network. Regression tests cover the gate and the verify-worker path.
 
 ### 12.4 [Low] Unsanitized `dlls.txt` entries used in filesystem delete
 - **Location:** `services/mods.py:remove_unknown_mod` (joins
@@ -844,9 +850,12 @@ with `WoW.exe`-presence gate before marking ready.
   rests solely on the torrent's piece hashes, which arrived over TLS from a
   configured host (same trust level as the manifest, but the claim is
   inaccurate).
-- **Remediation:** Update the docstring, or (preferably) re-run a per-file
-  SHA-1 check against the manifest after the torrent bulk download to actually
-  preserve the stated guarantee.
+- **Remediation:** **FIXED 2026-08-22** — after a torrent bulk download,
+  `UpdateWorker._reverify_torrent_files` re-checks exactly the delivered
+  files against the manifest's SHA-1 and HTTP-refetches mismatches; the
+  docstrings (here and in `BITTORRENT_UPDATER_NOTES.md`-adjacent modules)
+  now state that in the manifest-less recovery path the TLS-fetched piece
+  hashes are the sole guarantee.
 
 ### 12.8 [Informational] Redirect allowlist not re-applied (by design)
 - `security_http._HttpsOnlyRedirectHandler` keeps redirects HTTPS but does not
@@ -971,12 +980,12 @@ events asserted via monkeypatched `QMessageBox`/signals; `conftest` autouse
 | K3 | `core/security_http.py` | `certifi` import was dead (not a dep). **FIXED 2026-08-21**: `certifi>=2024.0` added to `pyproject.toml` dependencies (and `uv.lock`); the import now succeeds and curated roots load. | Documented Windows TLS mitigation was a no-op. | Possible TLS failures on locked Windows. | **High** |
 | K4 | `core/filesystem.py:42` | `already_updated()` never called. **FIXED 2026-08-21**: function and its test removed as dead code. | Dead code. | None. | **High** |
 | K5 | `torrent_update.py` | `write_resume_bytes`/`resume_path` invoked only by tests; `remove_resume_data` (live) is used by `http_update.py` to drop stale resume files, but resume data is never persisted — by design the updater re-derives piece state from disk and ignores stale resume data (asserted by `test_torrent_download` "resume" case). **Retained** (coherent tested cache API); not a defect. | Dead code + misleading comment at `http_update.py:793`. | None functionally. | **High** |
-| K6 | `controllers/addons.py` | `verify()` catalog-parse loop duplicated in `_ensure_catalog_loaded`. | Drift risk. | Maintenance hazard. | **Medium** |
-| K7 | `core/filesystem.py:71-76` | `get_client_version` uses fixed 1.12.1 offsets `0x00437BFC`/`0x00437C04`. | Different client builds → wrong version. | Wrong footer version label. | **Medium** |
-| K8 | `services/mods.py:fetch_mods_catalog` | Mods catalog had no TTL; cached forever unless `force=True`. **FIXED 2026-08-22**: weekly `catalog.CATALOG_TTL` + `catalog_is_stale()` gates the startup refresh; panels paint instantly from the cache with a "Catalog updated …" tag and ⟳ reload. | Stale mod list until manual Reload. | Users may not see new mods. | **Medium** |
+| K6 | `controllers/addons.py` | `verify()` catalog-parse loop duplicated in `_ensure_catalog_loaded`. **FIXED 2026-08-22**: `_ensure_catalog_loaded` delegates to `_available_from_catalog`, and the three remote-sha blocks share `_resolve_remote_sha`/`_apply_remote_status`. | Drift risk. | Maintenance hazard. | **Medium** |
+| K7 | `core/filesystem.py:71-76` | `get_client_version` uses fixed 1.12.1 offsets `0x00437BFC`/`0x00437C04`. **FIXED 2026-08-22**: named `_BUILD_OFFSET`/`_VERSION_OFFSET`, documented as 1.12.1-specific, and non-version-shaped bytes now decode to "" instead of garbage. | Different client builds → wrong version. | Wrong footer version label. | **Medium** |
+| K8 | `services/mods.py:fetch_mods_catalog` | Mods catalog has no TTL; cached forever unless `force=True`. **FIXED 2026-08-21** (commit `9146140`): weekly `catalog.CATALOG_TTL` refresh via `catalog_is_stale()`. | Stale mod list until manual Reload. | Users may not see new mods. | **Medium** |
 | K9 | `.tmp` (repo root) | Untracked file `{"out_dir": "/home/ourouk/Games/OctoWoW"}` — local artifact. **FIXED 2026-08-21**: deleted; root cause (a `save_cache` call before `configure()` made `_atomic_write("")` leak a `.tmp` into CWD) closed by making `save_config`/`save_cache` no-ops until the store is configured. | Should not be committed/left. | None (untracked). | **High** |
-| K10 | `controllers/settings.py` ↔ `cli.py` | Two "default game folder" values (`DEFAULT_OUT_DIR=~/VanillaWoW` vs `cli` sets `~/Games/<server>`). | Settings shows one, cli sets another. | Confusing first-run UX. | **Medium** |
-| K11 | `BITTORRENT_UPDATER_NOTES.md` docstring vs code (§12.7) | Claim of post-torrent manifest re-verify not implemented. | Misleading doc. | Trust reasoning unclear. | **Medium** |
+| K10 | `controllers/settings.py` ↔ `cli.py` | Two "default game folder" values (`DEFAULT_OUT_DIR=~/VanillaWoW` vs `cli` sets `~/Games/<server>`). **FIXED 2026-08-22**: shared `platform_support.default_game_folder(server_name)` used by both the first-run default and the Settings fallback. | Settings shows one, cli sets another. | Confusing first-run UX. | **Medium** |
+| K11 | `BITTORRENT_UPDATER_NOTES.md` docstring vs code (§12.7) | Claim of post-torrent manifest re-verify not implemented. **FIXED 2026-08-22**: re-verification implemented (see §12.7). | Misleading doc. | Trust reasoning unclear. | **Medium** |
 | K12 | `core/config_store.save_cache` | No lock (vs `update_config` lock). **FIXED 2026-08-21**: `save_cache` (and `save_config`) now take `_CONFIG_LOCK`. | Concurrent writers possible. | Rare cache corruption. | **Low** |
 
 ---
@@ -1004,26 +1013,38 @@ events asserted via monkeypatched `QMessageBox`/signals; `conftest` autouse
 ### Medium Priority
 - **M1.** ~~Sanitize mod release asset names (`safe_relpath`) to close §12.2.~~
   **DONE 2026-08-21** — `mods._checked_rel()` guards all install sites.
-- **M2.** Enforce git-host allowlist at all addon verify/metadata sites (§12.3).
+- **M2.** ~~Enforce git-host allowlist at all addon verify/metadata sites (§12.3).~~
+  **DONE 2026-08-22** — `addon_remote_sha` gates at entry.
 - **M3.** ~~Add a mods-catalog TTL (K8) or document the "cache until Reload"
   choice explicitly.~~ **DONE 2026-08-22** — weekly TTL shared by both
   catalogs; startup no longer force-bypasses the addons cache either.
-- **M4.** De-duplicate the addons catalog-parse logic (K6).
-- **M5.** Make `get_client_version` offset configurable / version-aware or
-  document the 1.12.1 coupling (K7).
+- **M4.** ~~De-duplicate the addons catalog-parse logic (K6).~~ **DONE
+  2026-08-22** — `_ensure_catalog_loaded` delegates to
+  `_available_from_catalog`; the three remote-sha blocks share helpers.
+- **M5.** ~~Make `get_client_version` offset configurable / version-aware or
+  document the 1.12.1 coupling (K7).~~ **DONE 2026-08-22** — offsets named,
+  documented as 1.12.1-specific, garbage decodes to "".
 - **M6.** ~~Escape `Config.wtf` values (§12.5) and sanitize `dlls.txt` entries
   (§12.4).~~ **DONE 2026-08-21** — `tweaks._wtf_str()` + dlls.txt guards.
-- **M7.** Fix the torrent docstring (§12.7) or actually re-verify post-torrent.
+- **M7.** ~~Fix the torrent docstring (§12.7) or actually re-verify post-torrent.~~
+  **DONE 2026-08-22** — `_reverify_torrent_files` implements the manifest
+  SHA-1 re-check of delivered files.
 
 ### Low Priority
 - **L1.** ~~Lock `save_cache` (K12).~~ **DONE 2026-08-21** — `_CONFIG_LOCK`
   now covers both writers; unconfigured paths no-op (also closes the `.tmp`
   leak, K9).
 - **L2.** ~~Remove the stray `.tmp` (K9).~~ **DONE 2026-08-21** — deleted.
-- **L3.** Reconcile the two default game-folder values (K10).
-- **L4.** Consider promoting the string-marker protocol to a typed enum/event
-  to reduce `_handle_log` fragility (refactor, not a bug).
-- **L5.** Add `test_self_update.py` and the §14 tests.
+- **L3.** ~~Reconcile the two default game-folder values (K10).~~ **DONE
+  2026-08-22** — shared `platform_support.default_game_folder()`.
+- **L4.** Marker protocol fragility: **partially DONE 2026-08-22** — constants
+  centralized in `services/update_backend/markers.py`, `_handle_log` is a
+  dict dispatch, and `tests/test_markers.py` enforces handler completeness +
+  forbids raw literals; full typed-event promotion remains future work.
+- **L5.** ~~Add `test_self_update.py` and the §14 tests.~~ **DONE 2026-08-22**
+  — dedicated `tests/test_self_update.py`; the §14 regression tests for
+  wayland, mod asset names, and Defender exclusion landed with the 2026-08-21
+  fixes.
 
 ---
 
