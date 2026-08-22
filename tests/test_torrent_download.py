@@ -17,6 +17,7 @@ from types import SimpleNamespace
 import pytest
 
 import vanilla_wow_launcher.services.update_backend.http_update as client_update
+import vanilla_wow_launcher.services.update_backend.sources as update_sources
 import vanilla_wow_launcher.services.update_backend.torrent_update as td
 from vanilla_wow_launcher.core import launcher
 from vanilla_wow_launcher.services.update_backend.http_update import (
@@ -196,7 +197,7 @@ def test_download_source_uses_mirror_torrent_url(monkeypatch):
         }
     )
     monkeypatch.setattr(
-        client_update,
+        update_sources,
         "secure_urlopen",
         lambda req, timeout=5, allowed_hosts=None: _resp(b"{}"),
     )
@@ -1017,7 +1018,9 @@ def test_run_skips_traverse_when_torrent_ran(tmp_path, monkeypatch):
     monkeypatch.setattr(client_update, "load_cache", lambda: {})
     monkeypatch.setattr(client_update, "save_cache", lambda c: None)
     traversed = []
-    monkeypatch.setattr(worker, "traverse", lambda node, _: traversed.append(node))
+    monkeypatch.setattr(
+        worker, "traverse", lambda node, _: traversed.append(node)
+    )
     monkeypatch.setattr(worker, "_torrent_download", lambda nodes: True)
     nodes = [{"type": "file", "name": "a.bin", "hash": "A" * 40, "size": 1}]
     worker.run(nodes)
@@ -1042,7 +1045,9 @@ def test_run_traverse_runs_when_torrent_unused(tmp_path, monkeypatch):
     monkeypatch.setattr(client_update, "load_cache", lambda: {})
     monkeypatch.setattr(client_update, "save_cache", lambda c: None)
     traversed = []
-    monkeypatch.setattr(worker, "traverse", lambda node, _: traversed.append(node))
+    monkeypatch.setattr(
+        worker, "traverse", lambda node, _: traversed.append(node)
+    )
     monkeypatch.setattr(worker, "_torrent_download", lambda nodes: False)
     nodes = [{"type": "file", "name": "a.bin", "hash": "A" * 40, "size": 1}]
     worker.run(nodes)

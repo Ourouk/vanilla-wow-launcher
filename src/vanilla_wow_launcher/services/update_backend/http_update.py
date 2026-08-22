@@ -17,8 +17,6 @@ import queue
 import shutil
 import time
 import urllib.request
-from typing import NamedTuple
-from urllib.error import HTTPError
 
 from ...core.config_store import load_cache, save_cache
 from ...core.constants import (
@@ -33,78 +31,23 @@ from ...core.filesystem import (
     sha1_file,
 )
 from ...core.helpers import fmt_size, fmt_speed
-from ...core.log_sink import debug_emit
 from ...core.security_http import allowed_download_hosts, secure_urlopen
 from ..tweaks import write_config_wtf
+from . import markers
+from .sources import DownloadSource, _download_source
 
-
-class DownloadSource(NamedTuple):
-    """The resolved endpoints of the active download source."""
-
-    manifest_url: str
-    client_url: str
-    torrent_url: str | None = None
+# Re-exported for compatibility: controllers and tests resolve these through
+# this module (and monkeypatch `_download_source` on it).
+__all__ = [
+    "DownloadSource",
+    "UpdateWorker",
+    "VerifyWorker",
+    "torrent_recovery_available",
+    "_download_source",
+]
 
 
 TORRENT_VALIDATION_CACHE_KEY = "__torrent_validation__"
-
-
-def _source_reachable(url: str) -> bool:
-    """Whether a download source answers at `url`. Any HTTP response — even an
-    error status (4xx/5xx) — proves the host is reachable; only transport
-    failures (DNS, refused, timeout) count as down."""
-    req = urllib.request.Request(url, headers={"User-Agent": UA})
-    try:
-        with secure_urlopen(
-            req,
-            timeout=5,
-            allowed_hosts=allowed_download_hosts(),
-        ) as r:
-            r.read(1)
-        return True
-    except HTTPError:
-        return True
-    except Exception:
-        return False
-
-
-def _download_source() -> "DownloadSource | None":
-    """Resolve the active download source: mirrors are tried in order
-    (automatic failover, probed via their client-files endpoint) and the
-    server is the fallback. Returns None when the launcher configuration is
-    missing."""
-    from ...core import launcher
-
-    cfg = launcher.config()
-    server = cfg.server_url if cfg else ""
-    if not server:
-        return None
-    for mirror in cfg.mirrors if cfg else []:
-        if not mirror.manifest_url or not mirror.client_url:
-            continue
-        debug_emit(
-            f"[torrent] probing mirror {mirror.name} "
-            f"(manifest={'yes' if mirror.manifest_url else 'no'}, "
-            f"client={'yes' if mirror.client_url else 'no'}, "
-            f"torrent={'yes' if mirror.torrent_url else 'no'})"
-        )
-        if _source_reachable(mirror.manifest_url) and _source_reachable(
-            mirror.client_url
-        ):
-            debug_emit(f"[torrent] selected mirror {mirror.name}")
-            # Fall back to the server's torrent snapshot when the chosen mirror
-            # doesn't advertise one, so the resolved source still exposes a
-            # torrent even though the recovery UI keys off the whole config.
-            return DownloadSource(
-                mirror.manifest_url,
-                mirror.client_url,
-                mirror.torrent_url or cfg.torrent_url,
-            )
-    debug_emit(
-        f"[torrent] selected server {cfg.server_name} "
-        f"(torrent={'yes' if cfg.torrent_url else 'no'})"
-    )
-    return DownloadSource(cfg.manifest_url, cfg.client_url, cfg.torrent_url)
 
 
 def _torrent_available() -> bool:
@@ -206,7 +149,7 @@ class VerifyWorker:
             with secure_urlopen(req, timeout=DOWNLOAD_TIMEOUT) as r:
                 manifest = json.load(r)
             manifest_ok = True
-            self.log_q.put(("__MANIFEST_AVAILABLE__", ""))
+            self.log_q.put((markers.MANIFEST_AVAILABLE, ""))
             self.progress(0.0, "Verifying…", phase="Verifying")
 
             stale_nodes = [
@@ -230,11 +173,11 @@ class VerifyWorker:
 
             if stale_nodes:
                 self.log("Update available.", "acct")
-                self.log_q.put(("__UPDATE_NEEDED__", ""))
-                self.log_q.put(("__DIFF_TREE__", stale_nodes))
+                self.log_q.put((markers.UPDATE_NEEDED, ""))
+                self.log_q.put((markers.DIFF_TREE, stale_nodes))
             else:
                 self.log("Everything is up to date!", "ok")
-                self.log_q.put(("__UP_TO_DATE__", ""))
+                self.log_q.put((markers.UP_TO_DATE, ""))
         except Exception as e:
             self.log(f"Verification failed: {e}", "err")
             # A failed manifest fetch must not masquerade as "update needed":
@@ -244,7 +187,7 @@ class VerifyWorker:
             if not manifest_ok:
                 if self._torrent_verify(src):
                     return
-                self.log_q.put(("__MANIFEST_UNAVAILABLE__", ""))
+                self.log_q.put((markers.MANIFEST_UNAVAILABLE, ""))
                 if torrent_recovery_available():
                     self.log(
                         "Manifest unavailable — a full re-download via "
@@ -252,8 +195,8 @@ class VerifyWorker:
                         "dim",
                     )
             else:
-                self.log_q.put(("__UPDATE_NEEDED__", ""))
-            self.log_q.put(("__DIFF_TREE__", None))
+                self.log_q.put((markers.UPDATE_NEEDED, ""))
+            self.log_q.put((markers.DIFF_TREE, None))
 
     def _torrent_verify(self, src) -> bool:
         """When no manifest is available, verify the client against the
@@ -320,7 +263,7 @@ class VerifyWorker:
                     "No usable torrent snapshot — update unavailable.",
                     "err",
                 )
-                self.log_q.put(("__TORRENT_CORRUPT__", str(e)))
+                self.log_q.put((markers.TORRENT_CORRUPT, str(e)))
                 return True
             except TorrentFetchError as e:
                 if self._cancel:
@@ -331,7 +274,7 @@ class VerifyWorker:
                     "unavailable via BitTorrent.",
                     "err",
                 )
-                self.log_q.put(("__TORRENT_UNREACHABLE__", str(e)))
+                self.log_q.put((markers.TORRENT_UNREACHABLE, str(e)))
                 return True
 
             identity: dict = {
@@ -376,7 +319,7 @@ class VerifyWorker:
                 "No usable torrent snapshot — update unavailable.",
                 "err",
             )
-            self.log_q.put(("__TORRENT_CORRUPT__", str(e)))
+            self.log_q.put((markers.TORRENT_CORRUPT, str(e)))
             return True
         except TorrentFetchError as e:
             if self._cancel:
@@ -387,7 +330,7 @@ class VerifyWorker:
                 "unavailable via BitTorrent.",
                 "err",
             )
-            self.log_q.put(("__TORRENT_UNREACHABLE__", str(e)))
+            self.log_q.put((markers.TORRENT_UNREACHABLE, str(e)))
             return True
         except TorrentStalledError as e:
             if self._cancel:
@@ -398,7 +341,7 @@ class VerifyWorker:
                 "update unavailable.",
                 "err",
             )
-            self.log_q.put(("__TORRENT_STALLED__", str(e)))
+            self.log_q.put((markers.TORRENT_STALLED, str(e)))
             return True
         except TorrentSessionError as e:
             if self._cancel:
@@ -408,7 +351,7 @@ class VerifyWorker:
                 "No manifest and torrent session error — update unavailable.",
                 "err",
             )
-            self.log_q.put(("__TORRENT_SESSION_ERROR__", str(e)))
+            self.log_q.put((markers.TORRENT_SESSION_ERROR, str(e)))
             return True
         except TorrentDiskError as e:
             if self._cancel:
@@ -418,7 +361,7 @@ class VerifyWorker:
                 "No manifest and disk error — update unavailable.",
                 "err",
             )
-            self.log_q.put(("__TORRENT_DISK_ERROR__", str(e)))
+            self.log_q.put((markers.TORRENT_DISK_ERROR, str(e)))
             return True
         except Exception as e:
             if self._cancel:
@@ -429,7 +372,7 @@ class VerifyWorker:
                 "update unavailable via BitTorrent.",
                 "err",
             )
-            self.log_q.put(("__TORRENT_VERIFY_FAILED__", str(e)))
+            self.log_q.put((markers.TORRENT_VERIFY_FAILED, str(e)))
             return True
 
         snapshot = getattr(verifier, "snapshot", None)
@@ -451,22 +394,22 @@ class VerifyWorker:
         return True
 
     def _post_torrent_verdict(self, stale: list[str]):
-        self.log_q.put(("__TORRENT_REACHABLE__", ""))
+        self.log_q.put((markers.TORRENT_REACHABLE, ""))
         if not stale:
             self.log("Everything is up to date (BitTorrent snapshot).", "ok")
-            self.log_q.put(("__TORRENT_UP_TO_DATE__", ""))
+            self.log_q.put((markers.TORRENT_UP_TO_DATE, ""))
         else:
             self.log(
                 f"Update available — {len(stale)} stale file(s) vs the "
                 "BitTorrent snapshot.",
                 "acct",
             )
-            self.log_q.put(("__TORRENT_DIFF__", sorted(stale)))
+            self.log_q.put((markers.TORRENT_DIFF, sorted(stale)))
 
     def _cancel_torrent_verify(self) -> bool:
         """Finish a cancelled torrent verify without reporting a failure."""
         self.log("\nVerify cancelled.", "err")
-        self.log_q.put(("__ERROR__", ""))
+        self.log_q.put((markers.ERROR, ""))
         return True
 
 
@@ -492,6 +435,9 @@ class UpdateWorker:
         # hash-mismatch retry (which re-downloads the same file) isn't double
         # counted.
         self._counted: dict = {}
+        # Relative paths the torrent backend delivered in the last bulk
+        # download (empty when HTTP was used or no manifest tree exists).
+        self._torrent_wanted: set[str] = set()
 
     def cancel(self):
         self._cancel = True
@@ -666,12 +612,12 @@ class UpdateWorker:
     def _torrent_download(self, nodes) -> bool:
         """Bulk-download the stale files via BitTorrent when the active source
         advertises a ``torrent_url`` and libtorrent is available. Returns True
-        when the torrent backend ran. The caller then skips ``traverse()``'s
-        per-file HTTP re-verify (the torrent's piece verification already
-        covers the files). Returns False when the torrent backend was not used
-        (no ``torrent_url``, libtorrent missing, or the download failed), in
-        which case the caller falls back to ``traverse()`` for HTTP downloads
-        with manifest re-verification."""
+        when the torrent backend ran; the delivered paths are remembered in
+        ``_torrent_wanted`` for the caller's manifest SHA-1 re-check
+        (``_reverify_torrent_files``). Returns False when the torrent backend
+        was not used (no ``torrent_url``, libtorrent missing, or the download
+        failed), in which case the caller falls back to ``traverse()`` for
+        HTTP downloads with manifest re-verification."""
         src = self._source
         if src is None or not src.torrent_url:
             return False
@@ -695,6 +641,7 @@ class UpdateWorker:
 
             dl = TorrentDownloader(self.out_dir, self.log_q, self.prog_q)
             dl.download(src.torrent_url, wanted)
+            self._torrent_wanted = wanted
             self.log("[torrent] BitTorrent download complete.", "ok")
             return True
         except RuntimeError as e:
@@ -724,6 +671,59 @@ class UpdateWorker:
             dest = os.path.join(self.out_dir, rel)
             if not self._skip_download(node, dest):
                 wanted.add(rel)
+
+    def _reverify_torrent_files(self, nodes):
+        """SHA-1 re-check of exactly the files BitTorrent delivered, against
+        the manifest's hashes. Anything missing or mismatched is re-fetched
+        over HTTPS with ``download``'s resume/retry, so a torrent bulk
+        download cannot weaken the manifest's integrity guarantee. No-op when
+        no manifest tree exists (the recovery path — there the torrent's
+        piece hashes, received over TLS, are the only guarantee)."""
+        wanted = self._torrent_wanted
+        if not wanted:
+            return
+
+        suspects: list[tuple[dict, str]] = []
+
+        def walk(node, cur):
+            if self._cancel:
+                return
+            t = node["type"]
+            if t == "dir":
+                for child in node.get("files", []):
+                    walk(child, cur + [node["name"]])
+            elif t == "file":
+                rel = "/".join(cur + [node["name"]])
+                if rel in wanted:
+                    suspects.append((node, rel))
+            elif t == "mpq":
+                rel = "/".join(cur + [node["name"]]) + ".mpq"
+                if rel in wanted:
+                    suspects.append((node, rel))
+
+        for child in nodes:
+            walk(child, [])
+
+        self._total = sum(node["size"] for node, _ in suspects)
+        self._downloaded = 0
+        self.log(
+            f"[torrent] Re-verifying {len(suspects)} file(s) against "
+            "the manifest…",
+            "acct",
+        )
+        src = self._source
+        for node, rel in suspects:
+            dest = os.path.join(self.out_dir, rel)
+            if self._skip_download(node, dest):
+                continue
+            url = f"{src.client_url}/{rel}"
+            got_hash = self.download(url, dest, node["size"], rel)
+            if (got_hash or sha1_file(dest)) != node["hash"]:
+                raise RuntimeError(
+                    f"Hash mismatch after torrent download: {rel}"
+                )
+        self.log("[torrent] All files verified against manifest.", "ok")
+        self._torrent_wanted = set()
 
     def _sum_needed_bytes(self, nodes) -> int:
         """Total bytes of the files that actually need downloading (those not
@@ -846,42 +846,42 @@ class UpdateWorker:
             if self._cancel:
                 raise
             self.log(f"Torrent file corrupt: {e}", "err")
-            self.log_q.put(("__TORRENT_CORRUPT__", str(e)))
+            self.log_q.put((markers.TORRENT_CORRUPT, str(e)))
             return
         except TorrentStalledError as e:
             if self._cancel:
                 raise
             self.log(f"BitTorrent download stalled: {e}", "err")
-            self.log_q.put(("__TORRENT_STALLED__", str(e)))
+            self.log_q.put((markers.TORRENT_STALLED, str(e)))
             return
         except TorrentSessionError as e:
             if self._cancel:
                 raise
             self.log(f"BitTorrent session error: {e}", "err")
-            self.log_q.put(("__TORRENT_SESSION_ERROR__", str(e)))
+            self.log_q.put((markers.TORRENT_SESSION_ERROR, str(e)))
             return
         except TorrentDiskError as e:
             if self._cancel:
                 raise
             self.log(f"Disk I/O error: {e}", "err")
-            self.log_q.put(("__TORRENT_DISK_ERROR__", str(e)))
+            self.log_q.put((markers.TORRENT_DISK_ERROR, str(e)))
             return
         except TorrentFetchError as e:
             if self._cancel:
                 raise
             self.log(f"Torrent unreachable during download: {e}", "err")
-            self.log_q.put(("__TORRENT_UNREACHABLE__", str(e)))
+            self.log_q.put((markers.TORRENT_UNREACHABLE, str(e)))
             return
         except Exception as e:
             if self._cancel:
                 raise
             self.log(f"BitTorrent download failed: {e}", "err")
-            self.log_q.put(("__TORRENT_VERIFY_FAILED__", str(e)))
+            self.log_q.put((markers.TORRENT_VERIFY_FAILED, str(e)))
             return
         if self._cancel:
             self.log("\nUpdate cancelled.", "err")
             self.progress(0.0, "Cancelled")
-            self.log_q.put(("__ERROR__", ""))
+            self.log_q.put((markers.ERROR, ""))
             return
         # The stale set came from an earlier snapshot; if any wanted file is
         # still missing after a selective download, fall back to the whole
@@ -906,18 +906,18 @@ class UpdateWorker:
                     if self._cancel:
                         raise
                     self.log(f"BitTorrent recovery failed: {e}", "err")
-                    self.log_q.put(("__TORRENT_VERIFY_FAILED__", str(e)))
+                    self.log_q.put((markers.TORRENT_VERIFY_FAILED, str(e)))
                     return
                 if self._cancel:
                     self.log("\nUpdate cancelled.", "err")
                     self.progress(0.0, "Cancelled")
-                    self.log_q.put(("__ERROR__", ""))
+                    self.log_q.put((markers.ERROR, ""))
                     return
         # A recovered client without WoW.exe is useless — never mark ready.
         exe = os.path.join(self.out_dir, "WoW.exe")
         if not os.path.isfile(exe):
             self.log("Recovered client has no WoW.exe — update failed.", "err")
-            self.log_q.put(("__ERROR__", ""))
+            self.log_q.put((markers.ERROR, ""))
             return
         self.log("  BitTorrent recovery download complete.", "ok")
         remove_wdb(self.out_dir)
@@ -951,10 +951,10 @@ class UpdateWorker:
         client_ver = get_client_version(self.out_dir)
         if client_ver:
             self.log(f"Client version: {client_ver}", "dim")
-            self.log_q.put((f"__VERSION__{client_ver}", ""))
+            self.log_q.put((markers.VERSION_PREFIX + client_ver, ""))
         else:
             self.log("Could not read client version from WoW.exe", "dim")
-        self.log_q.put(("__TORRENT_RECOVERY_DONE__", ""))
+        self.log_q.put((markers.TORRENT_RECOVERY_DONE, ""))
 
     def run(self, diff_nodes=None, torrent_wanted: set[str] | None = None):
 
@@ -975,7 +975,7 @@ class UpdateWorker:
                         "ok",
                     )
                     self.progress(1.0, "")
-                    self.log_q.put(("__TORRENT_UP_TO_DATE__", ""))
+                    self.log_q.put((markers.TORRENT_UP_TO_DATE, ""))
                     return
                 self.progress(
                     0.02,
@@ -1022,7 +1022,7 @@ class UpdateWorker:
                         raise
                 if not torrent_recovery:
                     self._cache.pop(TORRENT_VALIDATION_CACHE_KEY, None)
-                    self.log_q.put(("__MANIFEST_AVAILABLE__", ""))
+                    self.log_q.put((markers.MANIFEST_AVAILABLE, ""))
                     self.log("Manifest received.", "ok")
                     self.progress(0.05, "Downloading…", phase="Downloading")
                     self.log("\nStarting client update…\n")
@@ -1050,7 +1050,7 @@ class UpdateWorker:
             if self._cancel:
                 self.log("\nUpdate cancelled.", "err")
                 self.progress(0.0, "Cancelled")
-                self.log_q.put(("__ERROR__", ""))
+                self.log_q.put((markers.ERROR, ""))
                 return
 
             self.log("\nDownload complete.", "ok")
@@ -1062,12 +1062,12 @@ class UpdateWorker:
             client_ver = get_client_version(self.out_dir)
             if client_ver:
                 self.log(f"Client version: {client_ver}", "dim")
-                self.log_q.put((f"__VERSION__{client_ver}", ""))
+                self.log_q.put((markers.VERSION_PREFIX + client_ver, ""))
             else:
                 self.log("Could not read client version from WoW.exe", "dim")
-            self.log_q.put(("__DONE__", ""))
+            self.log_q.put((markers.DONE, ""))
 
         except Exception as e:
             self.log(f"\n✗  {e}", "err")
             self.progress(0.0, "")
-            self.log_q.put(("__ERROR__", ""))
+            self.log_q.put((markers.ERROR, ""))

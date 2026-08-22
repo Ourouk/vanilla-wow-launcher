@@ -8,6 +8,7 @@ import urllib.request
 import pytest
 
 import vanilla_wow_launcher.services.update_backend.http_update as client_update
+import vanilla_wow_launcher.services.update_backend.sources as update_sources
 import vanilla_wow_launcher.services.update_backend.torrent_update as td
 from vanilla_wow_launcher.services.update_backend.http_update import (
     DownloadSource,
@@ -322,7 +323,7 @@ def test_download_source_fails_over_to_first_reachable_mirror(monkeypatch):
             raise ConnectionError("down")
         return _resp()
 
-    monkeypatch.setattr(client_update, "secure_urlopen", fake_urlopen)
+    monkeypatch.setattr(update_sources, "secure_urlopen", fake_urlopen)
     src = client_update._download_source()
     assert (
         src.manifest_url == "https://b.example/api/file/latest/manifest.json"
@@ -380,7 +381,7 @@ def test_download_source_uses_mirror_endpoint_overrides(monkeypatch):
     )
 
     monkeypatch.setattr(
-        client_update,
+        update_sources,
         "secure_urlopen",
         lambda req, timeout=5, allowed_hosts=None: _resp(),
     )
@@ -415,7 +416,7 @@ def test_download_source_probes_client_url_and_accepts_http_error(monkeypatch):
         probed.append(req.full_url)
         raise HTTPError(req.full_url, 404, "Not Found", None, None)
 
-    monkeypatch.setattr(client_update, "secure_urlopen", http_error)
+    monkeypatch.setattr(update_sources, "secure_urlopen", http_error)
     src = client_update._download_source()
     assert probed == [
         "https://m1.example/api/file/latest/manifest.json",
@@ -451,6 +452,7 @@ def test_verify_uses_selected_manifest_url(monkeypatch, tmp_path):
         fetched.append(req.full_url)
         return _resp()
 
+    monkeypatch.setattr(update_sources, "secure_urlopen", fake_urlopen)
     monkeypatch.setattr(client_update, "secure_urlopen", fake_urlopen)
     monkeypatch.setattr(client_update, "load_cache", lambda: {})
     monkeypatch.setattr(client_update, "save_cache", lambda c: None)

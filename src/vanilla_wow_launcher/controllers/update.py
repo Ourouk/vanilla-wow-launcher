@@ -25,6 +25,7 @@ from ..services.self_update import (
     fetch_updater_latest_tag,
     updater_update_available,
 )
+from ..services.update_backend import markers
 from ..services.update_backend.http_update import (
     UpdateWorker,
     VerifyWorker,
@@ -566,170 +567,172 @@ class UpdateController:
         return bool(load_config().get("client_update_enabled", True))
 
     def _handle_log(self, msg: str, tag: str):
-        if msg == "__DONE__":
-            self.state.running = False
-            self.state.client_ready = True
-            self.state.manifest_available = True
-            self._op = None
-            self._dispatcher.post(ProgressChanged(1.0, ""))
-            self._dispatcher.post(OperationFinished("update", True))
-        elif msg == "__ERROR__":
-            op = self._op or "update"
-            self.state.running = False
-            self.state.client_ready = False
-            self._op = None
-            self._dispatcher.post(ProgressChanged(0.0, ""))
-            self._dispatcher.post(OperationFailed(op, ""))
-        elif msg == "__MANIFEST_AVAILABLE__":
-            # A valid manifest was fetched and parsed — the update button may
-            # offer its real verdict again.
-            self.state.manifest_available = True
-        elif msg == "__MANIFEST_UNAVAILABLE__":
-            # The manifest couldn't be fetched/parsed — treat the client as
-            # never verified and gray out the update button.
-            self.state.manifest_available = False
-            self.state.client_ready = False
-            self.state.running = False
-            self._op = None
-            self._dispatcher.post(ProgressChanged(0.0, ""))
-            self._dispatcher.post(OperationFinished("verify", False))
-        elif msg == "__UP_TO_DATE__":
-            self.state.running = False
-            self.state.client_ready = True
-            self.state.manifest_available = True
-            self._op = None
-            self._dispatcher.post(ProgressChanged(1.0, ""))
-            self._dispatcher.post(OperationFinished("verify", True))
-        elif msg == "__UPDATE_NEEDED__":
-            self.state.running = False
-            self.state.client_ready = False
-            self.state.manifest_available = True
-            self._op = None
-            self._dispatcher.post(ProgressChanged(0.0, ""))
-            self._dispatcher.post(OperationFinished("verify", False))
-        elif msg == "__DIFF_TREE__":
-            self.state.diff_nodes = tag
-            if tag:
-                self._dispatcher.post(UpdateFilesList(_flatten_diff_tree(tag)))
-        elif msg == "__TORRENT_REACHABLE__":
-            self.state.torrent_reachable = True
-        elif msg == "__TORRENT_UNREACHABLE__":
-            # No manifest and the BitTorrent snapshot can't be fetched — don't
-            # offer a dead recovery download; the UI falls back to PLAY (or a
-            # disabled UPDATE) instead.
-            self.state.running = False
-            self.state.client_ready = False
-            self.state.manifest_available = False
-            self.state.torrent_reachable = False
-            self.state.torrent_error = tag or None
-            self.state.torrent_stale = None
-            op = self._op or "verify"
-            self._op = None
-            self._dispatcher.post(ProgressChanged(0.0, ""))
-            self._dispatcher.post(OperationFinished(op, False))
-        elif msg == "__TORRENT_CORRUPT__":
-            # Torrent file downloaded but malformed — cannot use for recovery.
-            self.state.running = False
-            self.state.client_ready = False
-            self.state.manifest_available = False
-            self.state.torrent_reachable = False
-            self.state.torrent_error = tag or None
-            self.state.torrent_stale = None
-            op = self._op or "verify"
-            self._op = None
-            self._dispatcher.post(ProgressChanged(0.0, ""))
-            self._dispatcher.post(OperationFinished(op, False))
-        elif msg == "__TORRENT_STALLED__":
-            # Verification stalled (low/no peers) — torrent reachable, offer
-            # recovery download on next launch.
-            self.state.running = False
-            self.state.client_ready = False
-            self.state.manifest_available = False
-            self.state.torrent_reachable = True
-            self.state.torrent_error = tag or None
-            self.state.torrent_stale = None
-            op = self._op or "verify"
-            self._op = None
-            self._dispatcher.post(ProgressChanged(0.0, ""))
-            self._dispatcher.post(OperationFinished(op, False))
-        elif msg == "__TORRENT_SESSION_ERROR__":
-            # Session creation failed — torrent reachable, offer retry.
-            self.state.running = False
-            self.state.client_ready = False
-            self.state.manifest_available = False
-            self.state.torrent_reachable = True
-            self.state.torrent_error = tag or None
-            self.state.torrent_stale = None
-            op = self._op or "verify"
-            self._op = None
-            self._dispatcher.post(ProgressChanged(0.0, ""))
-            self._dispatcher.post(OperationFinished(op, False))
-        elif msg == "__TORRENT_DISK_ERROR__":
-            # Disk full / permission denied — torrent reachable, show error.
-            self.state.running = False
-            self.state.client_ready = False
-            self.state.manifest_available = False
-            self.state.torrent_reachable = True
-            self.state.torrent_error = tag or None
-            self.state.torrent_stale = None
-            op = self._op or "verify"
-            self._op = None
-            self._dispatcher.post(ProgressChanged(0.0, ""))
-            self._dispatcher.post(OperationFinished(op, False))
-        elif msg == "__TORRENT_VERIFY_FAILED__":
-            # The snapshot was fetched but libtorrent recheck failed — the
-            # torrent IS reachable, so offer recovery download.
-            self.state.running = False
-            self.state.client_ready = False
-            self.state.manifest_available = False
-            self.state.torrent_reachable = True
-            self.state.torrent_error = tag or None
-            self.state.torrent_stale = None
-            op = self._op or "verify"
-            self._op = None
-            self._dispatcher.post(ProgressChanged(0.0, ""))
-            self._dispatcher.post(OperationFinished(op, False))
-        elif msg == "__TORRENT_DIFF__":
-            # A manifest-less verify against the BitTorrent snapshot found
-            # stale files: remember which ones so the update only fetches
-            # them. The manifest stays unavailable so a later verify still
-            # re-checks, but the client is not ready yet.
-            self.state.running = False
-            self.state.client_ready = False
-            self.state.manifest_available = False
-            self.state.torrent_stale = list(tag) if tag else []
-            self._op = None
-            self._dispatcher.post(ProgressChanged(0.0, ""))
-            self._dispatcher.post(
-                UpdateFilesList(sorted(self.state.torrent_stale))
-            )
-            self._dispatcher.post(OperationFinished("verify", False))
-        elif msg == "__TORRENT_UP_TO_DATE__":
-            # The client already matches the BitTorrent snapshot even though
-            # no manifest was ever fetched.
-            self.state.running = False
-            self.state.client_ready = True
-            self.state.manifest_available = False
-            self.state.torrent_stale = None
-            self._op = None
-            self._dispatcher.post(ProgressChanged(1.0, ""))
-            self._dispatcher.post(OperationFinished("verify", True))
-        elif msg == "__TORRENT_RECOVERY_DONE__":
-            # A manifest-less BitTorrent recovery install finished: the client
-            # files are present and piece-hash verified, but no manifest was
-            # ever fetched — keep manifest_available False so the next verify
-            # still re-checks everything.
-            self.state.running = False
-            self.state.client_ready = True
-            self.state.manifest_available = False
-            self._op = None
-            self._dispatcher.post(ProgressChanged(1.0, ""))
-            self._dispatcher.post(OperationFinished("update", True))
-        elif msg.startswith("__VERSION__"):
-            self.state.client_version = msg[len("__VERSION__") :]
+        if markers.is_version(msg):
+            self.state.client_version = markers.version_of(msg)
+            return
+        handler = self._MARKER_HANDLERS.get(msg)
+        if handler is not None:
+            handler(self, tag)
         else:
             debug_emit(msg)
             self._dispatcher.post(LogMessage(msg, tag))
+
+    def _on_done(self, tag: str):
+        self.state.running = False
+        self.state.client_ready = True
+        self.state.manifest_available = True
+        self._op = None
+        self._dispatcher.post(ProgressChanged(1.0, ""))
+        self._dispatcher.post(OperationFinished("update", True))
+
+    def _on_error(self, tag: str):
+        op = self._op or "update"
+        self.state.running = False
+        self.state.client_ready = False
+        self._op = None
+        self._dispatcher.post(ProgressChanged(0.0, ""))
+        self._dispatcher.post(OperationFailed(op, ""))
+
+    def _on_manifest_available(self, tag: str):
+        # A valid manifest was fetched and parsed — the update button may
+        # offer its real verdict again.
+        self.state.manifest_available = True
+
+    def _on_manifest_unavailable(self, tag: str):
+        # The manifest couldn't be fetched/parsed — treat the client as
+        # never verified and gray out the update button.
+        self.state.manifest_available = False
+        self.state.client_ready = False
+        self.state.running = False
+        self._op = None
+        self._dispatcher.post(ProgressChanged(0.0, ""))
+        self._dispatcher.post(OperationFinished("verify", False))
+
+    def _on_up_to_date(self, tag: str):
+        self.state.running = False
+        self.state.client_ready = True
+        self.state.manifest_available = True
+        self._op = None
+        self._dispatcher.post(ProgressChanged(1.0, ""))
+        self._dispatcher.post(OperationFinished("verify", True))
+
+    def _on_update_needed(self, tag: str):
+        self.state.running = False
+        self.state.client_ready = False
+        self.state.manifest_available = True
+        self._op = None
+        self._dispatcher.post(ProgressChanged(0.0, ""))
+        self._dispatcher.post(OperationFinished("verify", False))
+
+    def _on_diff_tree(self, tag: str):
+        self.state.diff_nodes = tag
+        if tag:
+            self._dispatcher.post(UpdateFilesList(_flatten_diff_tree(tag)))
+
+    def _on_torrent_reachable(self, tag: str):
+        self.state.torrent_reachable = True
+
+    def _on_torrent_unreachable(self, tag: str):
+        # No manifest and the BitTorrent snapshot can't be fetched — don't
+        # offer a dead recovery download; the UI falls back to PLAY (or a
+        # disabled UPDATE) instead.
+        self._torrent_failure(tag, reachable=False)
+
+    def _on_torrent_corrupt(self, tag: str):
+        # Torrent file downloaded but malformed — cannot use for recovery.
+        self._torrent_failure(tag, reachable=False)
+
+    def _on_torrent_stalled(self, tag: str):
+        # Verification stalled (low/no peers) — torrent reachable, offer
+        # recovery download on next launch.
+        self._torrent_failure(tag, reachable=True)
+
+    def _on_torrent_session_error(self, tag: str):
+        # Session creation failed — torrent reachable, offer retry.
+        self._torrent_failure(tag, reachable=True)
+
+    def _on_torrent_disk_error(self, tag: str):
+        # Disk full / permission denied — torrent reachable, show error.
+        self._torrent_failure(tag, reachable=True)
+
+    def _on_torrent_verify_failed(self, tag: str):
+        # The snapshot was fetched but libtorrent recheck failed — the
+        # torrent IS reachable, so offer recovery download.
+        self._torrent_failure(tag, reachable=True)
+
+    def _torrent_failure(self, tag: str, *, reachable: bool):
+        """Common landing for failed torrent verifications: end the
+        operation, remember the error, and gate the recovery offer on
+        whether the snapshot itself was reachable."""
+        self.state.running = False
+        self.state.client_ready = False
+        self.state.manifest_available = False
+        self.state.torrent_reachable = reachable
+        self.state.torrent_error = tag or None
+        self.state.torrent_stale = None
+        op = self._op or "verify"
+        self._op = None
+        self._dispatcher.post(ProgressChanged(0.0, ""))
+        self._dispatcher.post(OperationFinished(op, False))
+
+    def _on_torrent_diff(self, tag: str):
+        # A manifest-less verify against the BitTorrent snapshot found
+        # stale files: remember which ones so the update only fetches
+        # them. The manifest stays unavailable so a later verify still
+        # re-checks, but the client is not ready yet.
+        self.state.running = False
+        self.state.client_ready = False
+        self.state.manifest_available = False
+        self.state.torrent_stale = list(tag) if tag else []
+        self._op = None
+        self._dispatcher.post(ProgressChanged(0.0, ""))
+        self._dispatcher.post(
+            UpdateFilesList(sorted(self.state.torrent_stale))
+        )
+        self._dispatcher.post(OperationFinished("verify", False))
+
+    def _on_torrent_up_to_date(self, tag: str):
+        # The client already matches the BitTorrent snapshot even though
+        # no manifest was ever fetched.
+        self.state.running = False
+        self.state.client_ready = True
+        self.state.manifest_available = False
+        self.state.torrent_stale = None
+        self._op = None
+        self._dispatcher.post(ProgressChanged(1.0, ""))
+        self._dispatcher.post(OperationFinished("verify", True))
+
+    def _on_torrent_recovery_done(self, tag: str):
+        # A manifest-less BitTorrent recovery install finished: the client
+        # files are present and piece-hash verified, but no manifest was
+        # ever fetched — keep manifest_available False so the next verify
+        # still re-checks everything.
+        self.state.running = False
+        self.state.client_ready = True
+        self.state.manifest_available = False
+        self._op = None
+        self._dispatcher.post(ProgressChanged(1.0, ""))
+        self._dispatcher.post(OperationFinished("update", True))
+
+    _MARKER_HANDLERS = {
+        markers.DONE: _on_done,
+        markers.ERROR: _on_error,
+        markers.MANIFEST_AVAILABLE: _on_manifest_available,
+        markers.MANIFEST_UNAVAILABLE: _on_manifest_unavailable,
+        markers.UP_TO_DATE: _on_up_to_date,
+        markers.UPDATE_NEEDED: _on_update_needed,
+        markers.DIFF_TREE: _on_diff_tree,
+        markers.TORRENT_REACHABLE: _on_torrent_reachable,
+        markers.TORRENT_UNREACHABLE: _on_torrent_unreachable,
+        markers.TORRENT_CORRUPT: _on_torrent_corrupt,
+        markers.TORRENT_STALLED: _on_torrent_stalled,
+        markers.TORRENT_SESSION_ERROR: _on_torrent_session_error,
+        markers.TORRENT_DISK_ERROR: _on_torrent_disk_error,
+        markers.TORRENT_VERIFY_FAILED: _on_torrent_verify_failed,
+        markers.TORRENT_DIFF: _on_torrent_diff,
+        markers.TORRENT_UP_TO_DATE: _on_torrent_up_to_date,
+        markers.TORRENT_RECOVERY_DONE: _on_torrent_recovery_done,
+    }
 
     def _mods_have_errors(self) -> bool:
         return any(
