@@ -151,6 +151,16 @@ def server_games_dir(name: str) -> str:
     return os.path.join(games_dir(), safe)
 
 
+def default_game_folder(server_name: str | None) -> str:
+    """The default client folder for a server: Games/<name> when a server is
+    configured, else the plain DEFAULT_OUT_DIR fallback. Single source of
+    truth shared by the first-run wizard and the Settings fallback so both
+    never disagree about where the client will live."""
+    if server_name:
+        return server_games_dir(server_name)
+    return default_out_dir()
+
+
 def open_folder(path: str):
     """Open a folder in the platform's file manager.
 

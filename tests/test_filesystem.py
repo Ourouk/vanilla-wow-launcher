@@ -80,6 +80,15 @@ def test_get_client_version_reads_offsets(tmp_path):
     assert filesystem.get_client_version(str(tmp_path)) == "60000 (1.17)"
 
 
+def test_get_client_version_rejects_garbage(tmp_path):
+    exe = tmp_path / "WoW.exe"
+    data = bytearray(0x00437C10)
+    data[0x00437BFC : 0x00437BFC + 4] = b"Mai\xe9"
+    data[0x00437C04 : 0x00437C04 + 6] = b"nope!\x00"
+    exe.write_bytes(bytes(data))
+    assert filesystem.get_client_version(str(tmp_path)) == ""
+
+
 def test_rmtree_force_removes_readonly(tmp_path):
     d = tmp_path / "ro"
     d.mkdir()

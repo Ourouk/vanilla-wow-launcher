@@ -173,8 +173,7 @@ def _ensure_default_game_folder():
     cfg = config_store.load_config()
     if cfg.get("out_dir"):
         return
-    name = launcher.server_name() or "VanillaWoW"
-    folder = platform_support.server_games_dir(name)
+    folder = platform_support.default_game_folder(launcher.server_name())
     try:
         os.makedirs(folder, exist_ok=True)
     except OSError:

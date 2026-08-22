@@ -19,7 +19,6 @@ from ..core import config_store, filesystem, launcher, platform_support
 from ..core.constants import (
     CACHE_FILE,
     CONFIG_FILE,
-    DEFAULT_OUT_DIR,
     UA,
 )
 from ..core.errors import describe_net_error
@@ -54,7 +53,10 @@ class SettingsController:
 
         cfg = config_store.load_config()
         self.state = SettingsState(
-            path=os.path.normpath(cfg.get("out_dir", DEFAULT_OUT_DIR)),
+            path=os.path.normpath(
+                cfg.get("out_dir")
+                or platform_support.default_game_folder(launcher.server_name())
+            ),
             config=cfg,
         )
         self.launch = LaunchSettings.from_config(cfg)
