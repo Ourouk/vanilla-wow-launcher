@@ -999,10 +999,12 @@ def test_run_invokes_torrent_then_skips_covered_files(tmp_path, monkeypatch):
     assert "__ERROR__" not in msgs
 
 
-def test_run_skips_traverse_when_torrent_ran(tmp_path, monkeypatch):
-    """When the BitTorrent backend delivered the files, the per-file HTTP
-    re-verify (traverse) must be skipped — the torrent's piece verification
-    already covers them."""
+def test_run_reverifies_mismatched_torrent_files(tmp_path, monkeypatch):
+    """When the BitTorrent backend delivered the files, each delivered file
+    is re-checked against the manifest's SHA-1 and refetched over HTTP when
+    it doesn't match — without running the whole-client traverse."""
+    import hashlib
+
     client = _mk_client(tmp_path)
     log_q, prog_q = queue.Queue(), queue.Queue()
     worker = UpdateWorker(str(client), log_q, prog_q)
@@ -1021,10 +1023,69 @@ def test_run_skips_traverse_when_torrent_ran(tmp_path, monkeypatch):
     monkeypatch.setattr(
         worker, "traverse", lambda node, _: traversed.append(node)
     )
-    monkeypatch.setattr(worker, "_torrent_download", lambda nodes: True)
-    nodes = [{"type": "file", "name": "a.bin", "hash": "A" * 40, "size": 1}]
+
+    payload = b"correct bytes"
+    good_sha = hashlib.sha1(payload).hexdigest().upper()
+
+    def fake_torrent_download(nodes):
+        # Mimic the real backend: deliver files + record them as wanted.
+        (client / "a.bin").write_bytes(b"corrupted by peer")
+        worker._torrent_wanted = {"a.bin"}
+        return True
+
+    monkeypatch.setattr(worker, "_torrent_download", fake_torrent_download)
+    downloads = []
+
+    def fake_download(url, dest, size, name=""):
+        downloads.append(url)
+        with open(dest, "wb") as f:
+            f.write(payload)
+        return good_sha
+
+    monkeypatch.setattr(worker, "download", fake_download)
+    nodes = [{"type": "file", "name": "a.bin", "hash": good_sha, "size": 7}]
     worker.run(nodes)
+    assert downloads == ["https://srv/client/a.bin"]
     assert traversed == []
+    msgs = [m[0] for m in log_q.queue]
+    assert "__DONE__" in msgs
+
+
+def test_run_skips_reverify_when_torrent_files_match(tmp_path, monkeypatch):
+    """Delivered files already matching the manifest are not re-downloaded."""
+    import hashlib
+
+    client = _mk_client(tmp_path)
+    log_q, prog_q = queue.Queue(), queue.Queue()
+    worker = UpdateWorker(str(client), log_q, prog_q)
+    monkeypatch.setattr(
+        client_update,
+        "_download_source",
+        lambda: DownloadSource(
+            "https://srv/manifest.json",
+            "https://srv/client",
+            "https://srv/client.torrent",
+        ),
+    )
+    payload = b"already good"
+    good_sha = hashlib.sha1(payload).hexdigest().upper()
+
+    def fake_torrent_download(nodes):
+        (client / "a.bin").write_bytes(payload)
+        worker._torrent_wanted = {"a.bin"}
+        return True
+
+    monkeypatch.setattr(worker, "_torrent_download", fake_torrent_download)
+
+    def fail_download(*a, **k):
+        raise AssertionError("matching files must not be re-fetched")
+
+    monkeypatch.setattr(worker, "download", fail_download)
+    nodes = [{"type": "file", "name": "a.bin", "hash": good_sha, "size": 7}]
+    worker.run(nodes)
+    msgs = [m[0] for m in log_q.queue]
+    assert "__DONE__" in msgs
+    assert "__ERROR__" not in msgs
 
 
 def test_run_traverse_runs_when_torrent_unused(tmp_path, monkeypatch):

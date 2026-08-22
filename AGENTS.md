@@ -107,8 +107,12 @@ src/vanilla_wow_launcher/
 - Client updates get a second download backend: when the active download
   source advertises a `torrent_url` (launcher config, server or mirror) and
   libtorrent is importable, `UpdateWorker` bulk-downloads the stale files via
-  `services/update_backend/torrent_update.py` before its per-file HTTP `traverse()`, which
-  re-verifies every file and HTTP-resumes anything the torrent missed. Unit
+  `services/update_backend/torrent_update.py`, then re-verifies exactly the
+  delivered files against the manifest's SHA-1 (`_reverify_torrent_files`)
+  and HTTP-refetches any mismatch; the whole-client per-file HTTP
+  `traverse()` runs only when the torrent backend wasn't used. In the
+  manifest-less recovery path there is no manifest to check — the TLS-fetched
+  torrent's piece hashes are the guarantee. Unit
   tests inject a fake `libtorrent` via `sys.modules["libtorrent"]`; libtorrent
   is never needed to run the suite (only the e2e tests use the real one).
 - The torrent root is **auto-detected** from the unique `WoW.exe` position in

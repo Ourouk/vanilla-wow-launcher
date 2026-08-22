@@ -4,14 +4,18 @@
 hardened, allowlisted transport as the HTTP downloads) and uses libtorrent to
 bulk-download the files the manifest flagged as stale. Peers in the swarm are
 untrusted — a malicious peer can only inject data that fails the piece hashes
-embedded in the ``.torrent`` (which itself came over TLS) — and the caller
-still re-verifies every file against the manifest's SHA-1 afterwards, so the
-torrent backend cannot weaken the integrity guarantee of the HTTP path.
+embedded in the ``.torrent`` (which itself came over TLS).
+
+Integrity layering: when a manifest diff tree exists, the caller re-verifies
+the delivered files' SHA-1s against the manifest and re-fetches any mismatch
+over HTTPS, so the torrent backend cannot weaken the manifest's guarantee. In
+the manifest-less recovery path there is no per-file hash list to check
+against — there, the TLS-fetched torrent's piece hashes are the integrity
+guarantee by themselves.
 
 The session otherwise follows libtorrent's default storage and connection
 configuration. The torrent is paused and removed from the session once every
-wanted piece is in place. The caller remains responsible for the manifest-level
-file verification after the torrent completes.
+wanted piece is in place.
 """
 
 import hashlib

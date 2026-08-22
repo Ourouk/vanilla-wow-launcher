@@ -1037,7 +1037,12 @@ class UpdateWorker:
             if self._source is None:
                 raise RuntimeError("No download source configured.")
             ran_torrent = self._torrent_download(nodes)
-            if not ran_torrent:
+            if ran_torrent:
+                # Piece hashes prove what peers sent; when a manifest exists
+                # its SHA-1s remain the final word — re-check just the
+                # delivered files and HTTP-refetch any mismatch.
+                self._reverify_torrent_files(nodes)
+            else:
                 # The BitTorrent backend didn't fetch the files, so fall back
                 # to the per-file HTTP download (which re-verifies each file
                 # against the manifest). The update progress bar spans 0→100
