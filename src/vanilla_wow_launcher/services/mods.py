@@ -308,6 +308,82 @@ def fetch_mod_latest_version_cached(
     return None
 
 
+def _fetch_bytes(url: str) -> bytes:
+    """Download a mod asset/archive through the hardened transfer layer."""
+    req = urllib.request.Request(url, headers={"User-Agent": MOD_UA})
+    with secure_urlopen(
+        req, timeout=120, allowed_hosts=allowed_download_hosts()
+    ) as r:
+        return r.read()
+
+
+def _install_plain_file(client_dir: str, data: bytes, dest_rel: str) -> str:
+    """Write one file into the client dir (dest_rel already validated)."""
+    dest = os.path.join(client_dir, dest_rel)
+    os.makedirs(os.path.dirname(dest) or client_dir, exist_ok=True)
+    with open(dest, "wb") as f:
+        f.write(data)
+    log(f"  Installed {dest_rel}")
+    return dest_rel
+
+
+def _extract_zip_map(
+    client_dir: str, data: bytes, mod_id: str, extract_map: dict
+) -> list[str]:
+    """Write every extract_map {zip entry: dest} found in a zip archive."""
+    import zipfile
+
+    written = []
+    tmp_path = os.path.join(client_dir, f"_mod_tmp_{mod_id}.zip")
+    try:
+        with open(tmp_path, "wb") as f:
+            f.write(data)
+        with zipfile.ZipFile(tmp_path) as zf:
+            for zip_path, dest_rel in extract_map.items():
+                try:
+                    zip_data = zf.read(zip_path)
+                except KeyError:
+                    log(f"  Warning: {zip_path} not in zip, skipping")
+                    continue
+                written.append(
+                    _install_plain_file(client_dir, zip_data, dest_rel)
+                )
+    finally:
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+    return written
+
+
+def _extract_tar_map(
+    client_dir: str, data: bytes, extract_map: dict
+) -> list[str]:
+    """Write every extract_map {tar entry pattern: dest} found in a .tar.gz."""
+    import fnmatch
+    import io
+    import tarfile
+
+    written = []
+    with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tf:
+        all_names = tf.getnames()
+        for pattern, dest_rel in extract_map.items():
+            matched = (
+                pattern
+                if pattern in all_names
+                else next(
+                    (n for n in all_names if fnmatch.fnmatch(n, pattern)),
+                    None,
+                )
+            )
+            if matched is None:
+                log(
+                    f"  Warning: no file matching '{pattern}' in tar, skipping"
+                )
+                continue
+            tar_data = tf.extractfile(tf.getmember(matched)).read()
+            written.append(_install_plain_file(client_dir, tar_data, dest_rel))
+    return written
+
+
 def install_mod(
     mod: dict, client_dir: str, release: dict | None = None
 ) -> list:
@@ -342,46 +418,17 @@ def install_mod(
                 f"No matching asset '{src['asset_pattern']}' in {mod['id']} release"
             )
         log(f"  Downloading {asset['name']} ({asset['size'] // 1024} KB)...")
-        req = urllib.request.Request(
-            asset["browser_download_url"], headers={"User-Agent": MOD_UA}
-        )
-        with secure_urlopen(
-            req, timeout=120, allowed_hosts=allowed_download_hosts()
-        ) as r:
-            data = r.read()
+        data = _fetch_bytes(asset["browser_download_url"])
         if src.get("extract_map") is None:
-            dest_rel = _checked_rel(asset["name"])
-            dest = os.path.join(client_dir, dest_rel)
-            os.makedirs(os.path.dirname(dest) or client_dir, exist_ok=True)
-            with open(dest, "wb") as f:
-                f.write(data)
-            written.append(dest_rel)
-            log(f"  Installed {dest_rel}")
+            written.append(
+                _install_plain_file(
+                    client_dir, data, _checked_rel(asset["name"])
+                )
+            )
         else:
-            import zipfile
-
-            tmp_path = os.path.join(client_dir, f"_mod_tmp_{mod['id']}.zip")
-            try:
-                with open(tmp_path, "wb") as f:
-                    f.write(data)
-                with zipfile.ZipFile(tmp_path) as zf:
-                    for zip_path, dest_rel in src["extract_map"].items():
-                        try:
-                            zip_data = zf.read(zip_path)
-                        except KeyError:
-                            log(f"  Warning: {zip_path} not in zip, skipping")
-                            continue
-                        dest = os.path.join(client_dir, dest_rel)
-                        os.makedirs(
-                            os.path.dirname(dest) or client_dir, exist_ok=True
-                        )
-                        with open(dest, "wb") as f:
-                            f.write(zip_data)
-                        written.append(dest_rel)
-                        log(f"  Installed {dest_rel}")
-            finally:
-                if os.path.exists(tmp_path):
-                    os.unlink(tmp_path)
+            written += _extract_zip_map(
+                client_dir, data, mod["id"], src["extract_map"]
+            )
 
     elif src["kind"] == "github_release":
         rel = (
@@ -399,203 +446,46 @@ def install_mod(
                 f"No matching asset '{src['asset_pattern']}' in {mod['id']} release"
             )
         log(f"  Downloading {asset['name']} ({asset['size'] // 1024} KB)...")
-        req = urllib.request.Request(
-            asset["browser_download_url"], headers={"User-Agent": MOD_UA}
-        )
-        with secure_urlopen(
-            req, timeout=120, allowed_hosts=allowed_download_hosts()
-        ) as r:
-            data = r.read()
-
+        data = _fetch_bytes(asset["browser_download_url"])
         if src.get("extract_map") is None:
-            dest_rel = _checked_rel(asset["name"])
-            dest = os.path.join(client_dir, dest_rel)
-            os.makedirs(os.path.dirname(dest) or client_dir, exist_ok=True)
-            with open(dest, "wb") as f:
-                f.write(data)
-            written.append(dest_rel)
-            log(f"  Installed {dest_rel}")
+            written.append(
+                _install_plain_file(
+                    client_dir, data, _checked_rel(asset["name"])
+                )
+            )
         elif asset["name"].endswith(".tar.gz") or asset["name"].endswith(
             ".tgz"
         ):
-            import fnmatch as _fnmatch
-            import io
-            import tarfile
-
-            with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tf:
-                all_names = tf.getnames()
-                for pattern, dest_rel in src["extract_map"].items():
-                    matched = (
-                        pattern
-                        if pattern in all_names
-                        else next(
-                            (
-                                n
-                                for n in all_names
-                                if _fnmatch.fnmatch(n, pattern)
-                            ),
-                            None,
-                        )
-                    )
-                    if matched is None:
-                        log(
-                            f"  Warning: no file matching '{pattern}' in tar, skipping"
-                        )
-                        continue
-                    f_obj = tf.extractfile(tf.getmember(matched))
-                    tar_data = f_obj.read()
-                    dest = os.path.join(client_dir, dest_rel)
-                    os.makedirs(
-                        os.path.dirname(dest) or client_dir, exist_ok=True
-                    )
-                    with open(dest, "wb") as f:
-                        f.write(tar_data)
-                    written.append(dest_rel)
-                    log(f"  Installed {dest_rel}")
+            written += _extract_tar_map(client_dir, data, src["extract_map"])
         else:
-            import zipfile
-
-            tmp_path = os.path.join(client_dir, f"_mod_tmp_{mod['id']}.zip")
-            try:
-                with open(tmp_path, "wb") as f:
-                    f.write(data)
-                with zipfile.ZipFile(tmp_path) as zf:
-                    for zip_path, dest_rel in src["extract_map"].items():
-                        try:
-                            zip_data = zf.read(zip_path)
-                        except KeyError:
-                            log(
-                                f"  Warning: {zip_path} not found in zip, skipping"
-                            )
-                            continue
-                        dest = os.path.join(client_dir, dest_rel)
-                        os.makedirs(
-                            os.path.dirname(dest) or client_dir, exist_ok=True
-                        )
-                        with open(dest, "wb") as f:
-                            f.write(zip_data)
-                        written.append(dest_rel)
-                        log(f"  Installed {dest_rel}")
-            finally:
-                if os.path.exists(tmp_path):
-                    os.unlink(tmp_path)
+            written += _extract_zip_map(
+                client_dir, data, mod["id"], src["extract_map"]
+            )
 
     elif src["kind"] == "direct_tar":
         log(f"  Downloading {src['url'].split('/')[-1]}...")
-        req = urllib.request.Request(
-            src["url"], headers={"User-Agent": MOD_UA}
-        )
-        with secure_urlopen(
-            req, timeout=120, allowed_hosts=allowed_download_hosts()
-        ) as r:
-            data = r.read()
-        import fnmatch as _fnmatch
-        import io as _io
-        import tarfile
-
-        with tarfile.open(fileobj=_io.BytesIO(data), mode="r:gz") as tf:
-            all_names = tf.getnames()
-            for pattern, dest_rel in src["extract_map"].items():
-                matched = (
-                    pattern
-                    if pattern in all_names
-                    else next(
-                        (n for n in all_names if _fnmatch.fnmatch(n, pattern)),
-                        None,
-                    )
-                )
-                if matched is None:
-                    log(
-                        f"  Warning: no file matching '{pattern}' in tar, skipping"
-                    )
-                    continue
-                tar_data = tf.extractfile(tf.getmember(matched)).read()
-                dest = os.path.join(client_dir, dest_rel)
-                os.makedirs(os.path.dirname(dest) or client_dir, exist_ok=True)
-                with open(dest, "wb") as f:
-                    f.write(tar_data)
-                written.append(dest_rel)
-                log(f"  Installed {dest_rel}")
+        data = _fetch_bytes(src["url"])
+        written += _extract_tar_map(client_dir, data, src["extract_map"])
         if src.get("pinned_version"):
             mod["_resolved_version"] = src["pinned_version"]
 
     elif src["kind"] == "direct_file":
         url = src["url"]
         log(f"  Downloading {url.rsplit('/', 1)[-1]}...")
-        req = urllib.request.Request(url, headers={"User-Agent": MOD_UA})
-        with secure_urlopen(
-            req, timeout=120, allowed_hosts=allowed_download_hosts()
-        ) as r:
-            data = r.read()
+        data = _fetch_bytes(url)
 
         if src.get("extract_map") is None:
-            dest_rel = _checked_rel(src["dest"])
-            dest = os.path.join(client_dir, dest_rel)
-            os.makedirs(os.path.dirname(dest) or client_dir, exist_ok=True)
-            with open(dest, "wb") as f:
-                f.write(data)
-            written.append(dest_rel)
-            log(f"  Installed {dest_rel}")
+            written.append(
+                _install_plain_file(
+                    client_dir, data, _checked_rel(src["dest"])
+                )
+            )
         elif url.endswith(".tar.gz") or url.endswith(".tgz"):
-            import fnmatch as _fnmatch
-            import io
-            import tarfile
-
-            with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tf:
-                all_names = tf.getnames()
-                for pattern, dest_rel in src["extract_map"].items():
-                    matched = (
-                        pattern
-                        if pattern in all_names
-                        else next(
-                            (
-                                n
-                                for n in all_names
-                                if _fnmatch.fnmatch(n, pattern)
-                            ),
-                            None,
-                        )
-                    )
-                    if matched is None:
-                        log(
-                            f"  Warning: no file matching '{pattern}' in tar, skipping"
-                        )
-                        continue
-                    f_obj = tf.extractfile(tf.getmember(matched))
-                    tar_data = f_obj.read()
-                    dest = os.path.join(client_dir, dest_rel)
-                    os.makedirs(
-                        os.path.dirname(dest) or client_dir, exist_ok=True
-                    )
-                    with open(dest, "wb") as f:
-                        f.write(tar_data)
-                    written.append(dest_rel)
-                    log(f"  Installed {dest_rel}")
+            written += _extract_tar_map(client_dir, data, src["extract_map"])
         else:
-            import zipfile
-
-            tmp_path = os.path.join(client_dir, f"_mod_tmp_{mod['id']}.zip")
-            try:
-                with open(tmp_path, "wb") as f:
-                    f.write(data)
-                with zipfile.ZipFile(tmp_path) as zf:
-                    for zip_path, dest_rel in src["extract_map"].items():
-                        try:
-                            zip_data = zf.read(zip_path)
-                        except KeyError:
-                            log(f"  Warning: {zip_path} not in zip, skipping")
-                            continue
-                        dest = os.path.join(client_dir, dest_rel)
-                        os.makedirs(
-                            os.path.dirname(dest) or client_dir, exist_ok=True
-                        )
-                        with open(dest, "wb") as f:
-                            f.write(zip_data)
-                        written.append(dest_rel)
-                        log(f"  Installed {dest_rel}")
-            finally:
-                if os.path.exists(tmp_path):
-                    os.unlink(tmp_path)
+            written += _extract_zip_map(
+                client_dir, data, mod["id"], src["extract_map"]
+            )
 
         if src.get("pinned_version"):
             mod["_resolved_version"] = src["pinned_version"]
