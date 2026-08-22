@@ -5,7 +5,10 @@ your game files, installs mods and addons, applies common graphics, camera,
 sound, and gameplay preferences, and shows your server's news — all pointed at
 whichever server you choose, with no built-in server list.
 
-![Vanilla WoW Launcher](screenshot.png)
+![Vanilla WoW Launcher — news tab](screenshots/welcome.png)
+
+Screenshots of the update, mods, and addons tabs are shown below in the
+[Using the Launcher](#using-the-launcher) section.
 
 > For developers and server operators, see the
 > [developer guide](docs/DEVELOPER.md).
@@ -114,6 +117,8 @@ The launcher compares the files in your game folder with the configured server
 manifest and downloads only the missing or changed files. Downloads can resume
 after an interruption, and files are checked again after downloading.
 
+![Update tab](screenshots/update.png)
+
 When your server advertises a torrent, changed files are downloaded over
 BitTorrent first and anything it missed is finished over HTTP automatically —
 you just click **UPDATE**. If the manifest can't be reached but a torrent is
@@ -144,12 +149,16 @@ mod can be installed, updated, retried, or verified independently.
 The available mods depend on the server configuration. There is no universal
 built-in mod list.
 
+![Mods tab](screenshots/mods.png)
+
 ### Addons
 
 The **ADDONS** tab lists the addons provided by the configured catalog. Addons
 can be installed or updated individually, or updated together. Custom Git
 addons can be added from supported hosts, including GitHub, GitLab, Gitea, and
 Codeberg, when the configured security policy allows the host.
+
+![Addons tab](screenshots/addons.png)
 
 Addon releases are pinned to a source revision where possible, which helps
 ensure that an update is reproducible.
